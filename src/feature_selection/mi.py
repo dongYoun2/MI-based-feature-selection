@@ -17,7 +17,8 @@ def _mi_matrix(X: np.ndarray, y: np.ndarray, task: str) -> np.ndarray:
     mi_fn = mutual_info_classif if task == "classification" else mutual_info_regression
     return mi_fn(X, y, random_state=0)
 
-
+# TODO: current version is the heuristic of the mRMR.
+# need to extend or fix with the exact implementation.
 def mrmr(
     X: np.ndarray,
     y: np.ndarray,

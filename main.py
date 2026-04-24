@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 from src.experiment import run_grid
+from src.plotting import plot_metrics
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RUN_DIR = RESULTS_DIR / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--selectors",
         nargs="+",
-        default=["mrmr", "correlation", "l1", "rfe"],
+        default=["mrmr", "mi", "correlation", "l1", "rfe", "shap"],
     )
     parser.add_argument(
         "--models",
@@ -29,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         default=["logreg", "random_forest", "gradient_boosting"],
     )
     parser.add_argument("--ks", nargs="+", type=int, default=[5, 10, 20, 40])
-    parser.add_argument("--out", type=Path, default=RESULTS_DIR / "metrics.csv")
+    parser.add_argument("--out", type=Path, default=RUN_DIR / "metrics.csv")
     return parser.parse_args()
 
 
@@ -43,6 +46,7 @@ def main() -> None:
         out_path=args.out,
     )
     print(df)
+    plot_metrics(df, out_dir=args.out.parent)
 
 
 if __name__ == "__main__":

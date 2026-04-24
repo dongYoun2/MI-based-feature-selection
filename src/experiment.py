@@ -10,19 +10,23 @@ For each (dataset, feature selection method, model, k) combination:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Iterable
+from functools import lru_cache
 
 import pandas as pd
 
-from .data import DatasetName, load_dataset
+from .data import Dataset, DatasetName, load_dataset
 from .evaluate import evaluate_model
 from .feature_selection import (
     correlation_filter,
     l1_selection,
+    mi_filter,
     mrmr,
     rfe_selection,
+    shap_selection,
 )
 from .models import ModelName, build_model
 
@@ -30,27 +34,34 @@ SelectorFn = Callable[..., list[int]]
 
 SELECTORS: dict[str, SelectorFn] = {
     "mrmr": mrmr,
+    "mi": mi_filter,
     "correlation": correlation_filter,
     "l1": l1_selection,
     "rfe": rfe_selection,
+    "shap": shap_selection,
     # "cmi": cmi_selection,           # TODO
     # "pid": pid_selection,           # TODO
-    # "shap": shap_selection,         # TODO
 }
 
 
+@lru_cache(maxsize=None)
+def _cached_select(dataset_name: DatasetName, selector: str, k: int):
+    ds = load_dataset(dataset_name)
+    selector_fn = SELECTORS[selector]
+    selected = selector_fn(ds.X_train, ds.y_train, k=k, task=ds.task)
+    return tuple(selected)  # make hashable
+
+
 def run_single(
-    dataset: DatasetName,
+    ds: Dataset,
     selector: str,
     model_name: ModelName,
     k: int,
     random_state: int = 0,
 ) -> dict:
-    ds = load_dataset(dataset, random_state=random_state)
-    selector_fn = SELECTORS[selector]
+    selected = _cached_select(ds.name, selector, int(k))
 
-    selected = selector_fn(ds.X_train, ds.y_train, k=k, task=ds.task)
-
+    # shapes: (n, d) -> (n, k)
     X_train_sel = ds.X_train[:, selected]
     X_test_sel = ds.X_test[:, selected]
 
@@ -58,8 +69,9 @@ def run_single(
     model.fit(X_train_sel, ds.y_train)
 
     result = evaluate_model(model, X_test_sel, ds.y_test, ds.task, selected)
+
     return {
-        "dataset": dataset,
+        "dataset": ds.name,
         "selector": selector,
         "model": model_name,
         "k": k,
@@ -77,13 +89,27 @@ def run_grid(
 ) -> pd.DataFrame:
     records = []
     for dataset in datasets:
+        ds = load_dataset(dataset)
+        n_feat = ds.X_train.shape[1]
+
+        effective_ks = sorted({min(int(k), n_feat) for k in ks})
+        clipped = sorted({int(k) for k in ks if int(k) > n_feat})
+        if clipped:
+            warnings.warn(
+                f"[{dataset}] requested k={clipped} exceed n_features={n_feat}; "
+                f"capped to {n_feat} and deduplicated. Running k={effective_ks}.",
+                stacklevel=2,
+            )
+
         for selector in selectors:
             for model_name in models:
-                for k in ks:
-                    records.append(run_single(dataset, selector, model_name, k))
+                for k in effective_ks:
+                    records.append(run_single(ds, selector, model_name, k))
 
     df = pd.DataFrame(records)
+
     if out_path is not None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(out_path, index=False)
+
     return df

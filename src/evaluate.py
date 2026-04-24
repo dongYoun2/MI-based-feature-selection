@@ -1,27 +1,25 @@
 """Evaluation metrics for feature selection experiments.
 
-Reports (per proposal): accuracy, AUC, number of selected features, inference time.
+Reports (per proposal): F1, AUC, number of selected features.
 """
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
 import numpy as np
 from sklearn.base import BaseEstimator
-from sklearn.metrics import accuracy_score, mean_squared_error, r2_score, roc_auc_score
+from sklearn.metrics import f1_score, mean_squared_error, r2_score, roc_auc_score
 
 
 @dataclass
 class EvalResult:
     task: str
     n_features: int
-    accuracy: float | None
+    f1: float | None
     auc: float | None
     r2: float | None
     rmse: float | None
-    inference_time_s: float
 
     def to_dict(self) -> dict:
         return self.__dict__
@@ -34,13 +32,12 @@ def evaluate_model(
     task: str,
     selected_idx: list[int],
 ) -> EvalResult:
-    start = time.perf_counter()
     y_pred = model.predict(X_test)
-    inference_time = time.perf_counter() - start
 
-    acc = auc = r2 = rmse = None
+    f1 = auc = r2 = rmse = None
     if task == "classification":
-        acc = float(accuracy_score(y_test, y_pred))
+        average = "binary" if len(np.unique(y_test)) == 2 else "macro"
+        f1 = float(f1_score(y_test, y_pred, average=average))
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X_test)
             try:
@@ -60,9 +57,8 @@ def evaluate_model(
     return EvalResult(
         task=task,
         n_features=len(selected_idx),
-        accuracy=acc,
+        f1=f1,
         auc=auc,
         r2=r2,
         rmse=rmse,
-        inference_time_s=inference_time,
     )
