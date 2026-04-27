@@ -12,48 +12,80 @@ import numpy as np
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
 
-def _mi_matrix(X: np.ndarray, y: np.ndarray, task: str) -> np.ndarray:
-    """Marginal MI between each feature and y."""
-    mi_fn = mutual_info_classif if task == "classification" else mutual_info_regression
-    return mi_fn(X, y, random_state=0)
+def _feature_mi(X: np.ndarray, y: np.ndarray, task: str) -> np.ndarray:
+    if task == "classification":
+        return mutual_info_classif(X, y, random_state=0)
+    if task == "regression":
+        return mutual_info_regression(X, y, random_state=0)
+    raise ValueError("task must be 'classification' or 'regression'")
 
-# TODO: current version is the heuristic of the mRMR.
-# need to extend or fix with the exact implementation.
+
+def _pair_feature_mi(x_i: np.ndarray, x_j: np.ndarray) -> float:
+    return float(mutual_info_regression(x_i.reshape(-1, 1), x_j, random_state=0)[0])
+
+
+def _mrmr(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str,
+    *,
+    redundancy: str,
+) -> list[int]:
+    if redundancy not in {"correlation", "mi"}:
+        raise ValueError("redundancy must be 'correlation' or 'mi'")
+
+    n_features = X.shape[1]
+    k = min(k, n_features)
+    if k <= 0:
+        return []
+
+    relevance = _feature_mi(X, y, task)
+
+    selected = [int(np.argmax(relevance))]
+    remaining = set(range(n_features))
+    remaining.remove(selected[0])
+
+    redundancy_sum = np.zeros(n_features)
+
+    while len(selected) < k and remaining:
+        last = selected[-1]
+        x_last = X[:, last]
+
+        for j in remaining:
+            if redundancy == "correlation":
+                c = np.corrcoef(x_last, X[:, j])[0, 1]
+                redundancy_sum[j] += 0.0 if np.isnan(c) else abs(c)
+            else:
+                redundancy_sum[j] += _pair_feature_mi(X[:, j], x_last)
+
+        best = max(
+            remaining,
+            key=lambda j: relevance[j] - redundancy_sum[j] / len(selected),
+        )
+
+        selected.append(best)
+        remaining.remove(best)
+
+    return selected
+
+
+def mrmr_heuristic(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+) -> list[int]:
+    return _mrmr(X, y, k, task, redundancy="correlation")
+
+
 def mrmr(
     X: np.ndarray,
     y: np.ndarray,
     k: int,
     task: str = "classification",
 ) -> list[int]:
-    """Minimum Redundancy Maximum Relevance feature selection.
-
-    Returns the indices of the top-k selected features in selection order.
-    """
-    n_features = X.shape[1]
-    k = min(k, n_features)
-
-    relevance = _mi_matrix(X, y, task)
-    selected: list[int] = []
-    remaining = set(range(n_features))
-
-    first = int(np.argmax(relevance))
-    selected.append(first)
-    remaining.discard(first)
-
-    redundancy_sum = np.zeros(n_features)
-    while len(selected) < k and remaining:
-        last = selected[-1]
-        for j in remaining:
-            redundancy_sum[j] += abs(np.corrcoef(X[:, last], X[:, j])[0, 1])
-        scores = {
-            j: relevance[j] - redundancy_sum[j] / len(selected)
-            for j in remaining
-        }
-        best = max(scores, key=scores.get)
-        selected.append(best)
-        remaining.discard(best)
-
-    return selected
+    return _mrmr(X, y, k, task, redundancy="mi")
 
 
 def cmi_selection(
