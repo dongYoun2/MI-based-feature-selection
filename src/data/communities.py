@@ -53,8 +53,8 @@ def preprocess_communities(
     X_train: pd.DataFrame,
     X_test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Stage 3 -- train/test-aware feature preprocessing for communities."""
-    raise NotImplementedError
+    """Stage 3 -- placeholder (scaling etc. can be added later)."""
+    return X_train.copy(), X_test.copy()
 
 
 # --- Convenience wrapper (stages 1 + 2) -----------------------------------
@@ -79,8 +79,6 @@ def load_communities(
 
     missing_frac = df.isna().mean()
     df = df.loc[:, missing_frac <= drop_high_missing]
-
-    df = df.fillna(df.median(numeric_only=True))
 
     y = df[_COMMUNITIES_TARGET].astype(float)
     X = df.drop(columns=[_COMMUNITIES_TARGET])

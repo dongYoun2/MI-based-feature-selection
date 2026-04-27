@@ -6,7 +6,8 @@ Three-stage pipeline:
        Pure I/O + minimal munging: read files, merge, filter target rows.
     2. ``clean_nhanes(X, y, ...)`` -> ``(X_df, y)``
        Generic, dataset-level cleaning that is *not* model-specific: drop ID
-       columns, drop high-missingness columns, impute, recode sentinels.
+       columns, drop high-missingness columns, recode sentinels (median impute
+       is deferred until after splits; see :mod:`src.data.imputation`).
        Output is still a human-readable DataFrame with original column names.
     3. ``preprocess_nhanes(X_train, X_test)`` -> ``(X_train_df, X_test_df)``
        Model-level feature preprocessing applied *after* the train/test split
@@ -121,7 +122,8 @@ def clean_nhanes(
 
     missing_frac = X.isna().mean()
     X = X.loc[:, missing_frac <= drop_high_missing]
-    X = X.fillna(X.median(numeric_only=True))
+    # Median imputation is applied after train/val or train/test splits (see
+    # :func:`src.data.median_impute_train`) to avoid leakage.
 
     return X.reset_index(drop=True), y.reset_index(drop=True)
 

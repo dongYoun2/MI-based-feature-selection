@@ -24,7 +24,13 @@ def plot_metrics(df: pd.DataFrame, out_dir: Path) -> list[Path]:
 
     for dataset, ds_df in df.groupby("dataset"):
         task = ds_df["task"].iloc[0]
-        metrics = [m for m in METRICS_BY_TASK[task] if m in ds_df.columns]
+        metrics = [
+            m
+            for m in METRICS_BY_TASK[task]
+            if m in ds_df.columns or f"{m}_mean" in ds_df.columns
+        ]
+        if not metrics:
+            continue
         models = sorted(ds_df["model"].unique())
         selectors = sorted(ds_df["selector"].unique())
 
@@ -37,13 +43,38 @@ def plot_metrics(df: pd.DataFrame, out_dir: Path) -> list[Path]:
             for c, model in enumerate(models):
                 ax = axes[r, c]
                 sub = ds_df[ds_df["model"] == model]
-                for selector in selectors:
+                for i, selector in enumerate(selectors):
                     line = sub[sub["selector"] == selector].sort_values("k")
-                    ax.plot(line["k"], line[metric], marker="o", label=selector)
+                    mean_col = f"{metric}_mean"
+                    std_col = f"{metric}_std"
+                    color = f"C{i % 10}"
+                    if mean_col in line.columns:
+                        y = line[mean_col]
+                        kvals = line["k"]
+                        if std_col in line.columns and line[std_col].notna().any():
+                            std = line[std_col].fillna(0.0)
+                            ax.fill_between(
+                                kvals,
+                                y - std,
+                                y + std,
+                                color=color,
+                                alpha=0.15,
+                                linewidth=0,
+                            )
+                        ax.plot(kvals, y, marker="o", color=color, label=selector)
+                    else:
+                        ax.plot(
+                            line["k"],
+                            line[metric],
+                            marker="o",
+                            color=color,
+                            label=selector,
+                        )
                 if r == 0:
                     ax.set_title(model)
                 if c == 0:
-                    ax.set_ylabel(metric.upper())
+                    ylab = f"{metric.upper()} (mean ± std)" if f"{metric}_mean" in ds_df.columns else metric.upper()
+                    ax.set_ylabel(ylab)
                 if r == len(metrics) - 1:
                     ax.set_xlabel("k")
                 ax.grid(True, alpha=0.3)

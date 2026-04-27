@@ -63,8 +63,8 @@ def preprocess_lending_club(
     X_train: pd.DataFrame,
     X_test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Stage 3 -- train/test-aware feature preprocessing for Lending Club."""
-    raise NotImplementedError
+    """Stage 3 -- placeholder (scaling etc. can be added later)."""
+    return X_train.copy(), X_test.copy()
 
 
 # --- Convenience wrapper (stages 1 + 2) -----------------------------------
@@ -97,7 +97,6 @@ def load_lending_club(
 
     missing_frac = df.isna().mean()
     df = df.loc[:, missing_frac <= 0.3]
-    df = df.fillna(df.median(numeric_only=True))
 
     if nrows is None and len(df) > 100_000:
         df = df.sample(n=100_000, random_state=random_state)
