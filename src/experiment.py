@@ -88,7 +88,9 @@ def _eval_one_fold(
 
     records: list[dict] = []
     for selector in selectors:
-        full_selected = list(SELECTORS[selector](X_train, y_train, k=k_max, task=task))
+        full_selected = list(SELECTORS[selector](
+            X_train, y_train, k=k_max, task=task, random_state=random_state,
+        ))
         for k in fold_ks:
             selected = full_selected[:k]
             X_train_sel = X_train[:, selected]

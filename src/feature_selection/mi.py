@@ -16,16 +16,16 @@ import numpy as np
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
 
-def _feature_mi(X: np.ndarray, y: np.ndarray, task: str) -> np.ndarray:
+def _feature_mi(X: np.ndarray, y: np.ndarray, task: str, random_state: int) -> np.ndarray:
     if task == "classification":
-        return mutual_info_classif(X, y, random_state=0)
+        return mutual_info_classif(X, y, random_state=random_state)
     if task == "regression":
-        return mutual_info_regression(X, y, random_state=0)
+        return mutual_info_regression(X, y, random_state=random_state)
     raise ValueError("task must be 'classification' or 'regression'")
 
 
-def _pair_feature_mi(x_i: np.ndarray, x_j: np.ndarray) -> float:
-    return float(mutual_info_regression(x_i.reshape(-1, 1), x_j, random_state=0)[0])
+def _pair_feature_mi(x_i: np.ndarray, x_j: np.ndarray, random_state: int) -> float:
+    return float(mutual_info_regression(x_i.reshape(-1, 1), x_j, random_state=random_state)[0])
 
 
 def _mrmr(
@@ -35,6 +35,7 @@ def _mrmr(
     task: str,
     *,
     redundancy: str,
+    random_state: int,
 ) -> list[int]:
     if redundancy not in {"correlation", "mi"}:
         raise ValueError("redundancy must be 'correlation' or 'mi'")
@@ -44,7 +45,7 @@ def _mrmr(
     if k <= 0:
         return []
 
-    relevance = _feature_mi(X, y, task)
+    relevance = _feature_mi(X, y, task, random_state=random_state)
     selected = [int(np.argmax(relevance))]
     remaining = set(range(n_features)) - {selected[0]}
     redundancy_sum = np.zeros(n_features)
@@ -56,7 +57,7 @@ def _mrmr(
                 c = np.corrcoef(x_last, X[:, j])[0, 1]
                 redundancy_sum[j] += 0.0 if np.isnan(c) else abs(c)
             else:
-                redundancy_sum[j] += _pair_feature_mi(X[:, j], x_last)
+                redundancy_sum[j] += _pair_feature_mi(X[:, j], x_last, random_state=random_state)
 
         best = max(remaining, key=lambda j: relevance[j] - redundancy_sum[j] / len(selected))
         selected.append(best)
@@ -67,14 +68,16 @@ def _mrmr(
 
 def mrmr_heuristic(
     X: np.ndarray, y: np.ndarray, k: int, task: str = "classification",
+    *, random_state: int = 0,
 ) -> list[int]:
-    return _mrmr(X, y, k, task, redundancy="correlation")
+    return _mrmr(X, y, k, task, redundancy="correlation", random_state=random_state)
 
 
 def mrmr(
     X: np.ndarray, y: np.ndarray, k: int, task: str = "classification",
+    *, random_state: int = 0,
 ) -> list[int]:
-    return _mrmr(X, y, k, task, redundancy="mi")
+    return _mrmr(X, y, k, task, redundancy="mi", random_state=random_state)
 
 
 def _discretize_1d(x: np.ndarray, n_bins: int = 10) -> np.ndarray:
@@ -123,6 +126,7 @@ def pid_selection(
     task: str = "classification",
     *,
     n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for interface uniformity; method is deterministic
 ) -> list[int]:
     """
     PID-motivated greedy selection using CMI.
@@ -162,5 +166,6 @@ def pid_selection(
 
 def dynamic_cmi_selection(
     X: np.ndarray, y: np.ndarray, k: int, task: str = "classification",
+    *, random_state: int = 0,
 ) -> list[int]:
     raise NotImplementedError("TODO: implement CMI-based dynamic feature selection")

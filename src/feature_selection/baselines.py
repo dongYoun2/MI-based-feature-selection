@@ -6,6 +6,11 @@ Implements:
     - L1 regularization (Lasso / LogisticRegression-L1)
     - Recursive feature elimination (RFE)
     - SHAP-based feature importance
+
+All selectors expose a uniform ``(X, y, k, task, *, random_state)`` signature.
+``random_state`` is accepted by every selector even when the underlying method
+is deterministic (e.g. ``correlation_filter``) so that callers can pass it
+unconditionally.
 """
 
 from __future__ import annotations
@@ -22,6 +27,8 @@ def correlation_filter(
     y: np.ndarray,
     k: int,
     task: str = "classification",
+    *,
+    random_state: int = 0,  # noqa: ARG001 -- deterministic; accepted for interface uniformity
 ) -> list[int]:
     """Select top-k features with the highest |Pearson correlation| with y."""
     scores = np.array([abs(np.corrcoef(X[:, j], y)[0, 1]) for j in range(X.shape[1])])
@@ -34,6 +41,7 @@ def mi_filter(
     y: np.ndarray,
     k: int,
     task: str = "classification",
+    *,
     random_state: int = 0,
 ) -> list[int]:
     """Select top-k features by marginal mutual information MI(y; x_j).
@@ -51,16 +59,21 @@ def l1_selection(
     y: np.ndarray,
     k: int,
     task: str = "classification",
+    *,
+    random_state: int = 0,
     C: float = 1.0,
     alpha: float = 1e-3,
 ) -> list[int]:
     """Select top-k features by |coefficient| magnitude of an L1 model."""
     if task == "classification":
-        model = LogisticRegression(l1_ratio=1, solver="saga", C=C, max_iter=10000, tol=1e-3)
+        model = LogisticRegression(
+            l1_ratio=1, solver="saga", C=C, max_iter=10000, tol=1e-3,
+            random_state=random_state,
+        )
         model.fit(X, y)
         coef = np.abs(model.coef_).max(axis=0)
     else:
-        model = Lasso(alpha=alpha, max_iter=10000)
+        model = Lasso(alpha=alpha, max_iter=10000, random_state=random_state)
         model.fit(X, y)
         coef = np.abs(model.coef_)
     return list(np.argsort(coef)[::-1][:k])
@@ -71,6 +84,8 @@ def rfe_selection(
     y: np.ndarray,
     k: int,
     task: str = "classification",
+    *,
+    random_state: int = 0,
 ) -> list[int]:
     """Recursive feature elimination using a linear estimator.
 
@@ -79,9 +94,9 @@ def rfe_selection(
     that can be sliced for any k.
     """
     estimator = (
-        LogisticRegression(max_iter=1000)
+        LogisticRegression(max_iter=1000, random_state=random_state)
         if task == "classification"
-        else Lasso(alpha=1e-3, max_iter=10000)
+        else Lasso(alpha=1e-3, max_iter=10000, random_state=random_state)
     )
     selector = RFE(estimator, n_features_to_select=1)
     selector.fit(X, y)
@@ -93,8 +108,9 @@ def shap_selection(
     y: np.ndarray,
     k: int,
     task: str = "classification",
-    n_estimators: int = 200,
+    *,
     random_state: int = 0,
+    n_estimators: int = 200,
 ) -> list[int]:
     """Top-k features by mean |SHAP value| from a random-forest TreeSHAP model."""
     cls = RandomForestClassifier if task == "classification" else RandomForestRegressor
