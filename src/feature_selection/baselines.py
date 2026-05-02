@@ -72,15 +72,20 @@ def rfe_selection(
     k: int,
     task: str = "classification",
 ) -> list[int]:
-    """Recursive feature elimination using a linear estimator."""
+    """Recursive feature elimination using a linear estimator.
+
+    Fits with ``n_features_to_select=1`` to obtain the full elimination ranking
+    via ``RFE.ranking_``, so a single fit yields a top-k-monotone ordering
+    that can be sliced for any k.
+    """
     estimator = (
         LogisticRegression(max_iter=1000)
         if task == "classification"
         else Lasso(alpha=1e-3, max_iter=10000)
     )
-    selector = RFE(estimator, n_features_to_select=k)
+    selector = RFE(estimator, n_features_to_select=1)
     selector.fit(X, y)
-    return list(np.where(selector.support_)[0])
+    return list(np.argsort(selector.ranking_)[:k])
 
 
 def shap_selection(
