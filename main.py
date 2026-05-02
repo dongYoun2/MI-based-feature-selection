@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["logreg", "random_forest", "gradient_boosting"],
+        default=["logreg", "random_forest", "gradient_boosting", "svm"],
     )
     parser.add_argument("--ks", nargs="+", type=int, default=[5, 10, 20, 40])
     parser.add_argument(

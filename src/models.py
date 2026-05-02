@@ -1,7 +1,4 @@
-"""Predictive model builders used after feature selection.
-
-Models (per proposal): logistic regression, random forest, gradient boosting.
-"""
+"""Predictive model builders used after feature selection."""
 
 from __future__ import annotations
 
@@ -15,8 +12,11 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC, SVR
 
-ModelName = Literal["logreg", "random_forest", "gradient_boosting"]
+ModelName = Literal["logreg", "random_forest", "gradient_boosting", "svm"]
 
 
 def build_model(
@@ -36,4 +36,13 @@ def build_model(
     if name == "gradient_boosting":
         cls = GradientBoostingClassifier if task == "classification" else GradientBoostingRegressor
         return cls(random_state=random_state)
+    if name == "svm":
+        # SVMs are scale-sensitive; wrap with StandardScaler. probability=True
+        # is required so SVC exposes predict_proba for AUC / avg precision.
+        estimator = (
+            SVC(probability=True, random_state=random_state)
+            if task == "classification"
+            else SVR()
+        )
+        return Pipeline([("scaler", StandardScaler()), ("estimator", estimator)])
     raise ValueError(f"Unknown model: {name}")
