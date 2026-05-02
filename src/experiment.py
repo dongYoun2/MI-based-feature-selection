@@ -117,7 +117,7 @@ def _aggregate_cv_folds(fold_df: pd.DataFrame) -> pd.DataFrame:
     gcols = ["dataset", "selector", "model", "k"]
     task_by_ds = fold_df.groupby("dataset")["task"].first()
 
-    metric_cols = [c for c in ("auc", "f1", "rmse", "r2", "n_features") if c in fold_df.columns]
+    metric_cols = [c for c in ("auc", "avg_precision", "rmse", "r2", "n_features") if c in fold_df.columns]
     agg_dict = {}
     for m in metric_cols:
         agg_dict[f"{m}_mean"] = (m, "mean")

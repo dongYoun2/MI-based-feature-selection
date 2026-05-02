@@ -1,6 +1,6 @@
 """Plot metrics from a run: one figure per dataset.
 
-Layout: rows = metrics (AUC/F1 for classification, RMSE/R2 for regression),
+Layout: rows = metrics (AUC/Avg Precision for classification, RMSE/R2 for regression),
 columns = models, lines within each subplot = feature selectors.
 """
 
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 METRICS_BY_TASK: dict[str, list[str]] = {
-    "classification": ["auc", "f1"],
+    "classification": ["auc", "avg_precision"],
     "regression": ["rmse", "r2"],
 }
 
@@ -73,7 +73,8 @@ def plot_metrics(df: pd.DataFrame, out_dir: Path) -> list[Path]:
                 if r == 0:
                     ax.set_title(model)
                 if c == 0:
-                    ylab = f"{metric.upper()} (mean ± std)" if f"{metric}_mean" in ds_df.columns else metric.upper()
+                    label = "Avg Precision" if metric == "avg_precision" else metric.upper()
+                    ylab = f"{label} (mean ± std)" if f"{metric}_mean" in ds_df.columns else label
                     ax.set_ylabel(ylab)
                 if r == len(metrics) - 1:
                     ax.set_xlabel("k")
