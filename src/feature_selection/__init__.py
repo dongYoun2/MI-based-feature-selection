@@ -1,4 +1,4 @@
-from .mi import mrmr, cmi_selection, pid_selection
+from .mi import mrmr, mrmr_heuristic, cmi_selection, pid_selection
 from .baselines import (
     correlation_filter,
     mi_filter,
@@ -9,6 +9,7 @@ from .baselines import (
 
 __all__ = [
     "mrmr",
+    "mrmr_heuristic",
     "cmi_selection",
     "pid_selection",
     "correlation_filter",

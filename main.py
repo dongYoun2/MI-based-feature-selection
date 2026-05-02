@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--selectors",
         nargs="+",
-        default=["mrmr", "mi", "correlation", "l1", "rfe", "shap"],
+        default=["mrmr", "mrmr_heuristic", "mi", "correlation", "l1", "rfe", "shap"],
     )
     parser.add_argument(
         "--models",

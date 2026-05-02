@@ -28,6 +28,7 @@ from .feature_selection import (
     l1_selection,
     mi_filter,
     mrmr,
+    mrmr_heuristic,
     rfe_selection,
     shap_selection,
 )
@@ -37,6 +38,7 @@ SelectorFn = Callable[..., list[int]]
 
 SELECTORS: dict[str, SelectorFn] = {
     "mrmr": mrmr,
+    "mrmr_heuristic": mrmr_heuristic,
     "mi": mi_filter,
     "correlation": correlation_filter,
     "l1": l1_selection,
