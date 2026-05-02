@@ -2,8 +2,8 @@
 
 Implements:
     - mRMR (Peng et al., 2005)
-    - CMI-based dynamic feature selection (Covert & Lee, 2024)
     - PID-based redundancy/relevance (Wollstadt et al., 2023)
+    - CMI-based dynamic feature selection (Covert & Lee, 2024)
 """
 
 from __future__ import annotations
@@ -31,18 +31,20 @@ def _mrmr(
     task: str,
     *,
     redundancy: str,
-) -> list[int]:
+) -> tuple[list[int], list[float]]:
     if redundancy not in {"correlation", "mi"}:
         raise ValueError("redundancy must be 'correlation' or 'mi'")
 
     n_features = X.shape[1]
     k = min(k, n_features)
     if k <= 0:
-        return []
+        return [], []
 
     relevance = _feature_mi(X, y, task)
 
     selected = [int(np.argmax(relevance))]
+    selection_scores = [float(relevance[selected[0]])]
+
     remaining = set(range(n_features))
     remaining.remove(selected[0])
 
@@ -59,15 +61,14 @@ def _mrmr(
             else:
                 redundancy_sum[j] += _pair_feature_mi(X[:, j], x_last)
 
-        best = max(
-            remaining,
-            key=lambda j: relevance[j] - redundancy_sum[j] / len(selected),
-        )
+        best = max(remaining, key=lambda j: relevance[j] - redundancy_sum[j] / len(selected))
+        best_score = float(relevance[best] - redundancy_sum[best] / len(selected))
 
         selected.append(best)
+        selection_scores.append(float(best_score))
         remaining.remove(best)
 
-    return selected
+    return selected, selection_scores
 
 
 def mrmr_heuristic(
@@ -75,7 +76,7 @@ def mrmr_heuristic(
     y: np.ndarray,
     k: int,
     task: str = "classification",
-) -> list[int]:
+) -> tuple[list[int], list[float]]:
     return _mrmr(X, y, k, task, redundancy="correlation")
 
 
@@ -84,22 +85,61 @@ def mrmr(
     y: np.ndarray,
     k: int,
     task: str = "classification",
-) -> list[int]:
+) -> tuple[list[int], list[float]]:
     return _mrmr(X, y, k, task, redundancy="mi")
 
 
-def cmi_selection(
-    X: np.ndarray,
-    y: np.ndarray,
-    k: int,
-    task: str = "classification",
-) -> list[int]:
-    """Greedy conditional mutual information selection.
+def _discretize_1d(x: np.ndarray, n_bins: int = 10) -> np.ndarray:
+    x = np.asarray(x)
 
-    Placeholder using pairwise MI as a stand-in for CMI; the full method
-    trains a value network to estimate CMI(y; x_j | x_S) (Covert & Lee, 2024).
-    """
-    raise NotImplementedError("TODO: implement CMI-based dynamic feature selection")
+    if np.issubdtype(x.dtype, np.integer) and len(np.unique(x)) <= n_bins:
+        _, encoded = np.unique(x, return_inverse=True)
+        return encoded
+
+    quantiles = np.linspace(0, 1, n_bins + 1)[1:-1]
+    bins = np.unique(np.quantile(x, quantiles))
+
+    return np.digitize(x, bins)
+
+
+def _entropy_discrete(A: np.ndarray) -> float:
+    A = np.asarray(A)
+
+    if A.ndim == 1:
+        A = A.reshape(-1, 1)
+
+    _, counts = np.unique(A, axis=0, return_counts=True)
+
+    probs = counts / counts.sum()
+    return float(-np.sum(probs * np.log(probs + 1e-12)))
+
+
+def _mi_discrete(x: np.ndarray, y: np.ndarray) -> float:
+    """I(x; y) = H(x) + H(y) - H(x, y)"""
+    xy = np.column_stack([x, y])
+
+    return (
+        _entropy_discrete(x)
+        + _entropy_discrete(y)
+        - _entropy_discrete(xy)
+    )
+
+
+def _cmi_discrete(x: np.ndarray, y: np.ndarray, Z: np.ndarray) -> float:
+    """I(x; y | Z) = H(x,Z) + H(y,Z) - H(Z) - H(x,y,Z)"""
+    if Z.ndim == 1:
+        Z = Z.reshape(-1, 1)
+
+    xZ = np.column_stack([x, Z])
+    yZ = np.column_stack([y, Z])
+    xyZ = np.column_stack([x, y, Z])
+
+    return (
+        _entropy_discrete(xZ)
+        + _entropy_discrete(yZ)
+        - _entropy_discrete(Z)
+        - _entropy_discrete(xyZ)
+    )
 
 
 def pid_selection(
@@ -107,6 +147,65 @@ def pid_selection(
     y: np.ndarray,
     k: int,
     task: str = "classification",
+    *,
+    n_bins: int = 10,
+) -> tuple[list[int], list[float]]:
+    """
+    PID-motivated greedy selection using CMI.
+
+    Does NOT estimate PID atoms directly; uses the score:
+        score(j) = I(X_j ; y | selected_features)
+    """
+    n_samples, n_features = X.shape
+    k = min(k, n_features)
+
+    if k <= 0:
+        return [], []
+
+    X_disc = np.column_stack([
+        _discretize_1d(X[:, j], n_bins=n_bins)
+        for j in range(n_features)
+    ])
+
+    if task == "classification":
+        _, y_disc = np.unique(y, return_inverse=True)
+    elif task == "regression":
+        y_disc = _discretize_1d(y, n_bins=n_bins)
+    else:
+        raise ValueError("task must be 'classification' or 'regression'")
+
+    selected: list[int] = []
+    selection_scores: list[float] = []
+    remaining = set(range(n_features))
+
+    while len(selected) < k and remaining:
+        best_feature = None
+        best_score = -np.inf
+
+        for j in remaining:
+            x_j = X_disc[:, j]
+
+            if not selected:
+                score = _mi_discrete(x_j, y_disc)
+            else:
+                score = _cmi_discrete(x_j, y_disc, X_disc[:, selected])
+
+            if score > best_score:
+                best_score = score
+                best_feature = j
+
+        selected.append(int(best_feature))
+        selection_scores.append(float(best_score))
+        remaining.remove(best_feature)
+
+    return selected, selection_scores
+
+
+def dynamic_cmi_selection(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
 ) -> list[int]:
-    """Partial information decomposition-based selection (Wollstadt et al., 2023)."""
-    raise NotImplementedError("TODO: implement PID-based feature selection")
+    raise NotImplementedError("TODO: implement CMI-based dynamic feature selection")
+

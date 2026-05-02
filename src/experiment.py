@@ -31,21 +31,23 @@ from .feature_selection import (
     mrmr_heuristic,
     rfe_selection,
     shap_selection,
+    dynamic_cmi_selection,
+    pid_selection,
 )
 from .models import ModelName, build_model
 
 SelectorFn = Callable[..., list[int]]
 
 SELECTORS: dict[str, SelectorFn] = {
-    "mrmr": mrmr,
-    "mrmr_heuristic": mrmr_heuristic,
+    "mrmr": lambda X, y, k, task: mrmr(X, y, k, task)[0],
+    "mrmr_heuristic": lambda X, y, k, task: mrmr_heuristic(X, y, k, task)[0],
     "mi": mi_filter,
     "correlation": correlation_filter,
     "l1": l1_selection,
     "rfe": rfe_selection,
     "shap": shap_selection,
-    # "cmi": cmi_selection,           # TODO
-    # "pid": pid_selection,           # TODO
+    "pid": lambda X, y, k, task: pid_selection(X, y, k, task)[0],
+    "dynamic_cmi": dynamic_cmi_selection,
 }
 
 
