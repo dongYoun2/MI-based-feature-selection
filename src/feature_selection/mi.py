@@ -1,13 +1,11 @@
 """Mutual information-based feature selection methods.
 
-Implements:
-    - mRMR (Peng et al., 2005)
-    - PID-based redundancy/relevance (Wollstadt et al., 2023)
-    - CMI-based dynamic feature selection (Covert & Lee, 2024)
+- Implements mRMR (Peng et al., 2005)
+- Implements CMIM (Fleuret, 2004)
+- Implements a PID-motivated CMI selector (Wollstadt et al., 2023 framing; joint conditioning, not PID atoms)
 
-All selectors are greedy / monotonic in selection order, so calling with
-``k = k_max`` and slicing ``[:k']`` for any ``k' <= k_max`` is equivalent to
-calling directly with ``k'``.
+Greedy order is fixed for a given data split, so ``k = k_max`` then ``[:k]``
+matches calling the same function with ``k`` directly.
 """
 
 from __future__ import annotations
@@ -102,13 +100,13 @@ def _entropy_discrete(A: np.ndarray) -> float:
 
 
 def _mi_discrete(x: np.ndarray, y: np.ndarray) -> float:
-    """I(x; y) = H(x) + H(y) - H(x, y)"""
+    """Mutual information I(x; y) = H(x) + H(y) - H(x, y) on discrete samples."""
     xy = np.column_stack([x, y])
     return _entropy_discrete(x) + _entropy_discrete(y) - _entropy_discrete(xy)
 
 
 def _cmi_discrete(x: np.ndarray, y: np.ndarray, Z: np.ndarray) -> float:
-    """I(x; y | Z) = H(x,Z) + H(y,Z) - H(Z) - H(x,y,Z)"""
+    """Conditional MI I(x; y | Z) = H(x,Z) + H(y,Z) - H(Z) - H(x,y,Z)."""
     if Z.ndim == 1:
         Z = Z.reshape(-1, 1)
 
@@ -117,6 +115,27 @@ def _cmi_discrete(x: np.ndarray, y: np.ndarray, Z: np.ndarray) -> float:
     xyZ = np.column_stack([x, y, Z])
 
     return _entropy_discrete(xZ) + _entropy_discrete(yZ) - _entropy_discrete(Z) - _entropy_discrete(xyZ)
+
+
+def _prepare_discrete(
+    X: np.ndarray, y: np.ndarray, task: str, n_bins: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Discretize X column-wise and y (quantile bins for regression, label encode for classification)."""
+    X_disc = np.column_stack([_discretize_1d(X[:, j], n_bins=n_bins) for j in range(X.shape[1])])
+
+    if task == "classification":
+        _, y_disc = np.unique(y, return_inverse=True)
+    elif task == "regression":
+        y_disc = _discretize_1d(y, n_bins=n_bins)
+    else:
+        raise ValueError("task must be 'classification' or 'regression'")
+
+    return X_disc, y_disc
+
+
+def _marginal_mi_per_feature(X_disc: np.ndarray, y_disc: np.ndarray) -> np.ndarray:
+    """I(X_j; y) for every column j of a pre-discretized X."""
+    return np.array([_mi_discrete(X_disc[:, j], y_disc) for j in range(X_disc.shape[1])])
 
 
 def pid_selection(
@@ -129,43 +148,71 @@ def pid_selection(
     random_state: int = 0,  # noqa: ARG001 -- accepted for interface uniformity; method is deterministic
 ) -> list[int]:
     """
-    PID-motivated greedy selection using CMI.
+    PID-motivated greedy selection using CMI jointly conditioned on all selected features.
 
     Does NOT estimate PID atoms directly; uses the score:
-        score(j) = I(X_j ; y | selected_features)
+        score(j) = I(X_j ; y | X_S)        where S = already-selected features
     """
     n_features = X.shape[1]
     k = min(k, n_features)
     if k <= 0:
         return []
 
-    X_disc = np.column_stack([_discretize_1d(X[:, j], n_bins=n_bins) for j in range(n_features)])
+    X_disc, y_disc = _prepare_discrete(X, y, task, n_bins=n_bins)
 
-    if task == "classification":
-        _, y_disc = np.unique(y, return_inverse=True)
-    elif task == "regression":
-        y_disc = _discretize_1d(y, n_bins=n_bins)
-    else:
-        raise ValueError("task must be 'classification' or 'regression'")
-
-    selected: list[int] = []
-    remaining = set(range(n_features))
+    relevance = _marginal_mi_per_feature(X_disc, y_disc)
+    first = int(np.argmax(relevance))
+    selected: list[int] = [first]
+    remaining = set(range(n_features)) - {first}
 
     while len(selected) < k and remaining:
-        if not selected:
-            score_fn = lambda j: _mi_discrete(X_disc[:, j], y_disc)
-        else:
-            S = X_disc[:, selected]
-            score_fn = lambda j: _cmi_discrete(X_disc[:, j], y_disc, S)
-        best = max(remaining, key=score_fn)
+        S = X_disc[:, selected]
+        best = max(remaining, key=lambda j: _cmi_discrete(X_disc[:, j], y_disc, S))
         selected.append(int(best))
         remaining.remove(best)
 
     return selected
 
 
-def dynamic_cmi_selection(
-    X: np.ndarray, y: np.ndarray, k: int, task: str = "classification",
-    *, random_state: int = 0,
+def cmim(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for interface uniformity; method is deterministic
 ) -> list[int]:
-    raise NotImplementedError("TODO: implement CMI-based dynamic feature selection")
+    """Conditional Mutual Information Maximization (Fleuret, 2004).
+
+    First feature: argmax_j I(X_j; y). Later steps: argmax_j min_{s in S} I(X_j; y | X_s),
+    where S is the set already chosen (redundancy w.r.t. each picked feature separately).
+
+    Scores are updated incrementally when a new feature enters S (O(k*n) CMI calls total).
+    """
+    n_features = X.shape[1]
+    k = min(k, n_features)
+    if k <= 0:
+        return []
+
+    X_disc, y_disc = _prepare_discrete(X, y, task, n_bins=n_bins)
+
+    relevance = _marginal_mi_per_feature(X_disc, y_disc)
+    first = int(np.argmax(relevance))
+    selected: list[int] = [first]
+    remaining = set(range(n_features)) - {first}
+
+    # Running min of I(X_j; y | X_s) over s in S; +inf until at least one s is available.
+    score = np.full(n_features, np.inf)
+
+    while len(selected) < k and remaining:
+        x_last = X_disc[:, selected[-1]]
+        for j in remaining:
+            cmi_j = _cmi_discrete(X_disc[:, j], y_disc, x_last)
+            if cmi_j < score[j]:
+                score[j] = cmi_j
+        best = max(remaining, key=lambda j: score[j])
+        selected.append(int(best))
+        remaining.remove(best)
+
+    return selected

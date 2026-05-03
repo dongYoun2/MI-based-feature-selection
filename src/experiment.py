@@ -24,8 +24,8 @@ from sklearn.model_selection import KFold, StratifiedKFold
 from .data import DatasetName, arrays_for_fold, load_dataset, prepare_xy
 from .evaluate import evaluate_model
 from .feature_selection import (
+    cmim,
     correlation_filter,
-    dynamic_cmi_selection,
     l1_selection,
     mi_filter,
     mrmr,
@@ -46,8 +46,8 @@ SELECTORS: dict[str, SelectorFn] = {
     "l1": l1_selection,
     "rfe": rfe_selection,
     "shap": shap_selection,
+    "cmim": cmim,
     "pid": pid_selection,
-    "dynamic_cmi": dynamic_cmi_selection,
 }
 
 
