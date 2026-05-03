@@ -7,3 +7,5 @@ seaborn>=0.13
 shap>=0.46
 jupyter>=1.0
 tqdm>=4.66
+
+git+https://github.com/jundongl/scikit-feature.git

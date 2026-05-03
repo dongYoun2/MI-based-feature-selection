@@ -14,7 +14,7 @@ import pandas as pd
 ALL_METRICS: list[str] = ["auc", "avg_precision", "rmse", "r2"]
 
 
-def plot_metrics(df: pd.DataFrame, dataset: str, out_path: Path) -> None:
+def plot_metrics(df: pd.DataFrame, dataset: str, out_path: Path | None = None) -> None:
     """Save a single ``<dataset>.png`` figure to ``out_path``.
 
     ``df`` is expected to contain rows for one dataset only (the summary df
@@ -81,5 +81,7 @@ def plot_metrics(df: pd.DataFrame, dataset: str, out_path: Path) -> None:
     fig.suptitle(dataset)
     fig.tight_layout()
 
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=150)
+
+    # plt.close(fig)

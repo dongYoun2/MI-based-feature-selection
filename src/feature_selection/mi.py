@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
+from skfeature.function.information_theoretical_based.CMIM import cmim as _cmim_skf_impl
+
 
 def _feature_mi(X: np.ndarray, y: np.ndarray, task: str, random_state: int) -> np.ndarray:
     if task == "classification":
@@ -216,3 +218,53 @@ def cmim(
         remaining.remove(best)
 
     return selected
+
+
+def cmim_skfeature(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+) -> list[int]:
+    """
+    Run CMIM feature selection from scikit-feature on discretized data.
+    """
+    X = np.asarray(X)
+    y = np.asarray(y).reshape(-1)
+
+    if X.ndim != 2:
+        raise ValueError("X must be 2-D with shape (n_samples, n_features)")
+    if len(y) != X.shape[0]:
+        raise ValueError("y length must match number of rows in X")
+
+    n_features = X.shape[1]
+    k = min(int(k), n_features)
+    if k <= 0:
+        return []
+
+    X_disc, y_disc = _prepare_discrete(X, y, task, n_bins=n_bins)
+
+    F, _, _ = _cmim_skf_impl(X_disc, y_disc, n_selected_features=k)
+    return [int(i) for i in np.asarray(F).reshape(-1)]
+
+
+if __name__ == "__main__":
+    rng = np.random.default_rng(0)
+    n, p = 200, 24
+    Xc = rng.normal(size=(n, p))
+    yc = (Xc[:, 0] + 0.25 * rng.standard_normal(n) > 0).astype(np.int64)
+    Xr = rng.normal(size=(n, p))
+    yr = Xr[:, 1] + 0.1 * rng.standard_normal(n)
+
+    for task, X, y in (("classification", Xc, yc), ("regression", Xr, yr)):
+        for k in range(1, X.shape[1] + 1):
+            a = cmim(X, y, k, task=task, n_bins=10)
+            b = cmim_skfeature(X, y, k, task=task, n_bins=10)
+            if a != b:
+                print(f"{task} k={k}: {a!r} vs {b!r}")
+                break
+        else:
+            print(f"{task}: match k=1..{X.shape[1]}")
