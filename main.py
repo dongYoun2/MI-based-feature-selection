@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from src.experiment import run_grid
+from src.experiment import run_experiment
 from src.plotting import plot_metrics
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -16,10 +17,10 @@ RUN_DIR = RESULTS_DIR / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MI-based feature selection experiments")
     parser.add_argument(
-        "--datasets",
-        nargs="+",
-        default=["communities", "lending_club", "nhanes"],
+        "--dataset",
+        required=True,
         choices=["communities", "lending_club", "nhanes"],
+        help="Dataset to run the experiment grid on.",
     )
     parser.add_argument(
         "--selectors",
@@ -41,23 +42,38 @@ def parse_args() -> argparse.Namespace:
         "Use 0 or 1 for a single train/test split (no CV).",
     )
     parser.add_argument("--random-state", type=int, default=0)
-    parser.add_argument("--out", type=Path, default=RUN_DIR / "metrics.csv")
-    return parser.parse_args()
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Output directory for CSVs and plots. Defaults to results/<timestamp>/.",
+    )
+    args = parser.parse_args()
+    if args.out_dir is None:
+        args.out_dir = RUN_DIR
+    args.ks = sorted({int(k) for k in args.ks if int(k) > 0})
+    if not args.ks:
+        parser.error("--ks must include at least one positive integer.")
+    return args
 
 
 def main() -> None:
     args = parse_args()
-    df = run_grid(
-        datasets=args.datasets,
-        selectors=args.selectors,
-        models=args.models,
-        ks=args.ks,
-        out_path=args.out,
-        cv_folds=args.cv_folds,
-        random_state=args.random_state,
-    )
-    print(df)
-    plot_metrics(df, out_dir=args.out.parent)
+    try:
+        per_fold_df, summary_df = run_experiment(
+            dataset=args.dataset,
+            selectors=args.selectors,
+            models=args.models,
+            ks=args.ks,
+            out_dir=args.out_dir,
+            cv_folds=args.cv_folds,
+            random_state=args.random_state,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(summary_df)
+    plot_metrics(summary_df, dataset=args.dataset, out_path=args.out_dir / f"{args.dataset}.png")
 
 
 if __name__ == "__main__":

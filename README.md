@@ -70,8 +70,12 @@ shown under "Expected layout".
 ## Run
 
 ```bash
-python main.py --datasets communities --selectors mrmr correlation l1 rfe \
+python main.py --dataset communities --selectors mrmr correlation l1 rfe \
     --models logreg random_forest gradient_boosting --ks 5 10 20 40
 ```
 
-Each run writes to `results/<YYYY-MM-DD_HH-MM-SS>/metrics.csv`.
+Each run writes to `results/<YYYY-MM-DD_HH-MM-SS>/`:
+
+- `metrics_<dataset>.csv` — aggregated summary (mean/std of eval metrics across folds).
+- `metrics_<dataset>_per_fold.csv` — one row per (fold, selector, k, model), including the list of selected feature names.
+- `<dataset>.png` — metric vs. k plots (mean ± std).

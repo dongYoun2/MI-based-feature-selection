@@ -12,8 +12,6 @@ This is correctness-preserving for all selectors here:
 
 from __future__ import annotations
 
-import warnings
-from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -51,20 +49,21 @@ SELECTORS: dict[str, SelectorFn] = {
 }
 
 
-def _cap_ks(ks: Iterable[int], n_feat: int, dataset: str, *, warn: bool) -> list[int]:
-    effective = sorted({min(int(k), n_feat) for k in ks if int(k) > 0})
-    clipped = sorted({int(k) for k in ks if int(k) > n_feat})
-    if warn and clipped:
-        warnings.warn(
-            f"[{dataset}] requested k={clipped} exceed n_features={n_feat}; "
-            f"capped to {n_feat} and deduplicated. Running k={effective}.",
-            stacklevel=3,
+def _validate_ks(ks: list[int], n_feat: int, dataset: str) -> None:
+    """Raise ``ValueError`` if any requested ``k`` exceeds ``n_feat``.
+
+    Called once per dataset with the post-cleaning feature count, so the
+    user sees a clear error before any expensive selection/training runs.
+    """
+    over = [k for k in ks if k > n_feat]
+    if over:
+        raise ValueError(
+            f"[{dataset}] requested k={over} exceed available n_features={n_feat}. "
+            f"Reduce --ks (max allowed: {n_feat}) or pick a different dataset."
         )
-    return effective
 
 
 def _eval_one_fold(
-    dataset: DatasetName,
     X_train: np.ndarray,
     X_val: np.ndarray,
     y_train: np.ndarray,
@@ -72,112 +71,126 @@ def _eval_one_fold(
     task: str,
     selectors: Iterable[str],
     models: Iterable[ModelName],
-    ks: Iterable[int],
+    ks: list[int],
     random_state: int,
     *,
-    feature_names: list[str] | None = None,
+    fold: int,
+    feature_names: list[str],
 ) -> list[dict]:
     """Run all (selector, k, model) combinations on one (train, val) split.
 
-    Selection is performed once per selector at ``k_max`` and sliced per ``k``.
+    ``ks`` is assumed to already be sorted/deduped and validated against the
+    dataset's feature count by the caller. Selection is performed once per
+    selector at ``k_max`` and sliced per ``k``. Each returned record carries
+    the ``fold`` index and the names of the selected features for that
+    (fold, selector, k).
     """
-    fold_ks = _cap_ks(ks, X_train.shape[1], dataset, warn=False)
-    if not fold_ks:
-        return []
-    k_max = max(fold_ks)
+    k_max = max(ks)
 
     records: list[dict] = []
     for selector in selectors:
         full_selected = list(SELECTORS[selector](
             X_train, y_train, k=k_max, task=task, random_state=random_state,
         ))
-        for k in fold_ks:
+        for k in ks:
             selected = full_selected[:k]
             X_train_sel = X_train[:, selected]
             X_val_sel = X_val[:, selected]
             for model_name in models:
                 model = build_model(model_name, task=task, random_state=random_state)
                 model.fit(X_train_sel, y_train)
-                result = evaluate_model(model, X_val_sel, y_val, task, selected)
-                rec: dict = {
-                    "dataset": dataset,
+                result = evaluate_model(model, X_val_sel, y_val, task)
+                records.append({
+                    "fold": fold,
                     "selector": selector,
                     "model": model_name,
                     "k": k,
-                    **asdict(result),
-                }
-                if feature_names is not None:
-                    rec["selected_features"] = [feature_names[i] for i in selected]
-                records.append(rec)
+                    "selected_features": [feature_names[i] for i in selected],
+                    **result,
+                })
     return records
 
 
 def _aggregate_cv_folds(fold_df: pd.DataFrame) -> pd.DataFrame:
-    gcols = ["dataset", "selector", "model", "k"]
-    task_by_ds = fold_df.groupby("dataset")["task"].first()
+    gcols = ["selector", "model", "k"]
 
-    metric_cols = [c for c in ("auc", "avg_precision", "rmse", "r2", "n_features") if c in fold_df.columns]
+    metric_cols = [c for c in ("auc", "avg_precision", "rmse", "r2") if c in fold_df.columns]
     agg_dict = {f"{m}_{stat}": (m, stat) for m in metric_cols for stat in ("mean", "std")}
 
     out = fold_df.groupby(gcols, as_index=False).agg(**agg_dict)
     n_fold = fold_df.groupby(gcols, as_index=False).size().rename(columns={"size": "n_cv_folds"})
     out = out.merge(n_fold, on=gcols)
-    out["task"] = out["dataset"].map(task_by_ds)
     return out
 
 
-def run_grid(
-    datasets: Iterable[DatasetName],
+def run_experiment(
+    dataset: DatasetName,
     selectors: Iterable[str],
     models: Iterable[ModelName],
-    ks: Iterable[int],
-    out_path: Path | None = None,
+    ks: list[int],
+    out_dir: Path | None = None,
     *,
     cv_folds: int = 0,
     random_state: int = 0,
     loader_kwargs: dict | None = None,
-) -> pd.DataFrame:
-    """K-fold CV (``cv_folds > 1``) or a single train/test split otherwise.
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run the (selector, k, model) grid on a single dataset.
 
-    In both modes, per-fold preprocessing (median imputation + dataset stage-3)
-    is fit on the training part only.
+    Uses K-fold CV when ``cv_folds > 1``, otherwise a single train/test split
+    (treated as ``fold=0``). In both modes, per-fold preprocessing (median
+    imputation + dataset stage-3) is fit on the training part only.
+
+    ``ks`` is expected to be a non-empty, sorted, deduplicated list of
+    positive integers (callers should normalize at the input boundary).
+    Each ``k`` is validated against the dataset's feature count up-front;
+    ``ValueError`` is raised if any ``k`` exceeds it.
+
+    When ``out_dir`` is given, writes two CSV files:
+
+        - ``metrics_<dataset>_per_fold.csv``: one row per
+          (fold, selector, k, model), including ``selected_features``.
+        - ``metrics_<dataset>.csv``: aggregated summary with mean/std of the
+          eval metrics across folds.
+
+    Returns ``(per_fold_df, summary_df)``.
     """
     loader_kwargs = loader_kwargs or {}
     is_cv = cv_folds > 1
     records: list[dict] = []
 
-    for dataset in datasets:
-        if is_cv:
-            X_df, y_arr, task = prepare_xy(dataset, **loader_kwargs)
-            _cap_ks(ks, X_df.shape[1], dataset, warn=True)
-
-            splitter_cls = StratifiedKFold if task == "classification" else KFold
-            splitter = splitter_cls(n_splits=cv_folds, shuffle=True, random_state=random_state)
-            split_y = y_arr if task == "classification" else None
-
-            for train_idx, val_idx in splitter.split(X_df, split_y):
-                X_train, X_val, y_train, y_val, _, fold_task = arrays_for_fold(
-                    dataset, X_df, y_arr, train_idx, val_idx
-                )
-                records.extend(_eval_one_fold(
-                    dataset, X_train, X_val, y_train, y_val, fold_task,
-                    selectors, models, ks, random_state,
-                ))
-        else:
-            ds = load_dataset(dataset, random_state=random_state, **loader_kwargs)
-            _cap_ks(ks, ds.X_train.shape[1], dataset, warn=True)
-            records.extend(_eval_one_fold(
-                dataset, ds.X_train, ds.X_test, ds.y_train, ds.y_test, ds.task,
-                selectors, models, ks, random_state,
-                feature_names=ds.feature_names,
-            ))
-
-    df = pd.DataFrame(records)
     if is_cv:
-        df = _aggregate_cv_folds(df)
+        X_df, y_arr, task = prepare_xy(dataset, **loader_kwargs)
+        _validate_ks(ks, X_df.shape[1], dataset)
 
-    if out_path is not None:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(out_path, index=False)
+        splitter_cls = StratifiedKFold if task == "classification" else KFold
+        splitter = splitter_cls(n_splits=cv_folds, shuffle=True, random_state=random_state)
+        split_y = y_arr if task == "classification" else None
 
-    return df
+        for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X_df, split_y)):
+            X_train, X_val, y_train, y_val, feature_names, fold_task = arrays_for_fold(
+                dataset, X_df, y_arr, train_idx, val_idx
+            )
+            records.extend(_eval_one_fold(
+                X_train, X_val, y_train, y_val, fold_task,
+                selectors, models, ks, random_state,
+                fold=fold_idx, feature_names=feature_names,
+            ))
+    else:
+        ds = load_dataset(dataset, random_state=random_state, **loader_kwargs)
+        _validate_ks(ks, ds.X_train.shape[1], dataset)
+        records.extend(_eval_one_fold(
+            ds.X_train, ds.X_test, ds.y_train, ds.y_test, ds.task,
+            selectors, models, ks, random_state,
+            fold=0, feature_names=ds.feature_names,
+        ))
+
+    per_fold_df = pd.DataFrame(records)
+    summary_df = _aggregate_cv_folds(per_fold_df)
+
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        per_fold_df.to_csv(out_dir / f"metrics_{dataset}_per_fold.csv", index=False)
+        summary_df.to_csv(out_dir / f"metrics_{dataset}.csv", index=False)
+
+    return per_fold_df, summary_df
