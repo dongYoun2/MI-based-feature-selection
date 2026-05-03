@@ -25,6 +25,9 @@ def build_model(
     name: ModelName,
     task: Task,
     random_state: int = 0,
+    *,
+    svm_C: float | None = None,
+    svm_gamma: float | str | None = None,
 ) -> BaseEstimator:
     if name == "logreg":
         return (
@@ -41,10 +44,15 @@ def build_model(
     if name == "svm":
         # SVMs are scale-sensitive; wrap with StandardScaler. probability=True
         # is required so SVC exposes predict_proba for AUC / avg precision.
-        estimator = (
-            SVC(probability=True, random_state=random_state)
-            if task == "classification"
-            else SVR()
-        )
+        kw: dict = {}
+        if svm_C is not None:
+            kw["C"] = svm_C
+        if svm_gamma is not None:
+            kw["gamma"] = svm_gamma
+        if task == "classification":
+            estimator = SVC(probability=True, random_state=random_state, **kw)
+        else:
+            # SVR has no random_state on older sklearn; keep deterministic defaults.
+            estimator = SVR(**kw)
         return Pipeline([("scaler", StandardScaler()), ("estimator", estimator)])
     raise ValueError(f"Unknown model: {name}")
