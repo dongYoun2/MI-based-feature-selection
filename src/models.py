@@ -16,12 +16,14 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
 
+from .data import Task
+
 ModelName = Literal["logreg", "random_forest", "gradient_boosting", "svm"]
 
 
 def build_model(
     name: ModelName,
-    task: Literal["classification", "regression"] = "classification",
+    task: Task,
     random_state: int = 0,
 ) -> BaseEstimator:
     if name == "logreg":

@@ -42,7 +42,7 @@ def plot_metrics(df: pd.DataFrame, dataset: str, out_path: Path) -> None:
             ax = axes[r, c]
             sub = df[df["model"] == model]
             for i, selector in enumerate(selectors):
-                line = sub[sub["selector"] == selector].sort_values("k")
+                line = sub.loc[sub["selector"] == selector].sort_values(by="k")
                 mean_col = f"{metric}_mean"
                 std_col = f"{metric}_std"
                 color = f"C{i % 10}"

@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
 
-from .data import DatasetName, arrays_for_fold, load_dataset, prepare_xy
+from .data import DatasetName, Task, arrays_for_fold, load_dataset, prepare_xy
 from .evaluate import evaluate_model
 from .feature_selection import (
     cmim,
@@ -68,7 +68,7 @@ def _eval_one_fold(
     X_val: np.ndarray,
     y_train: np.ndarray,
     y_val: np.ndarray,
-    task: str,
+    task: Task,
     selectors: Iterable[str],
     models: Iterable[ModelName],
     ks: list[int],
