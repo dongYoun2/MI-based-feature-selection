@@ -19,7 +19,7 @@ import numpy as np
 import shap
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.feature_selection import RFE, mutual_info_classif, mutual_info_regression
-from sklearn.linear_model import Lasso, LogisticRegression
+from sklearn.linear_model import Lasso, LogisticRegression, Ridge
 
 
 def correlation_filter(
@@ -96,7 +96,7 @@ def rfe_selection(
     estimator = (
         LogisticRegression(max_iter=1000, random_state=random_state)
         if task == "classification"
-        else Lasso(alpha=1e-3, max_iter=10000, random_state=random_state)
+        else Ridge(alpha=1.0, random_state=random_state)
     )
     selector = RFE(estimator, n_features_to_select=1)
     selector.fit(X, y)
