@@ -22,12 +22,30 @@ ModelName = Literal["logreg", "random_forest", "gradient_boosting", "svm"]
 
 ModelOverrides = dict[str, float | str]
 
+# Defaults only for regression (``SVR``). Classification ``SVC`` omits ``C``/``gamma`` when unset,
+# matching sklearn; explicit overrides from ``svm_param_search`` / grid expansion apply to both.
+SVR_DEFAULT_C = 0.1
+SVR_DEFAULT_GAMMA = 0.01
 
-def model_metric_label(model_name: str, overrides: ModelOverrides) -> str:
-    """Human-readable model name for metrics tables (SVM includes ``C`` / ``gamma`` when set)."""
-    if model_name == "svm" and overrides:
-        return f"svm(C={overrides['svm_C']},gamma={overrides['svm_gamma']})"
-    return model_name
+
+def model_metric_label(model_name: str, overrides: ModelOverrides, *, task: Task) -> str:
+    """Human-readable model name for metrics tables; SVM reflects effective ``C`` / ``gamma``."""
+    if model_name != "svm":
+        return model_name
+    ov = overrides or {}
+    c, g = ov.get("svm_C"), ov.get("svm_gamma")
+    if task == "classification":
+        if c is None and g is None:
+            return "svm"
+        parts = []
+        if c is not None:
+            parts.append(f"C={c}")
+        if g is not None:
+            parts.append(f"gamma={g}")
+        return "svm(" + ",".join(parts) + ")"
+    ceff = SVR_DEFAULT_C if c is None else c
+    geff = SVR_DEFAULT_GAMMA if g is None else g
+    return f"svm(C={ceff},gamma={geff})"
 
 
 def build_model(
@@ -70,12 +88,14 @@ def _build_gradient_boosting(task: Task, random_state: int) -> BaseEstimator:
 def _build_svm(task: Task, random_state: int, overrides: ModelOverrides) -> BaseEstimator:
     kw: dict = {}
     c, g = overrides.get("svm_C"), overrides.get("svm_gamma")
-    if c is not None:
-        kw["C"] = c
-    if g is not None:
-        kw["gamma"] = g
     if task == "classification":
+        if c is not None:
+            kw["C"] = c
+        if g is not None:
+            kw["gamma"] = g
         estimator = SVC(probability=True, random_state=random_state, **kw)
     else:
+        kw["C"] = SVR_DEFAULT_C if c is None else c
+        kw["gamma"] = SVR_DEFAULT_GAMMA if g is None else g
         estimator = SVR(**kw)
     return Pipeline([("scaler", StandardScaler()), ("estimator", estimator)])

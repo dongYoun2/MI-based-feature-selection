@@ -108,7 +108,7 @@ def _eval_one_fold(
             X_train_sel = X_train[:, selected]
             X_val_sel = X_val[:, selected]
             for model_name, model_kw in model_specs:
-                display = model_metric_label(model_name, model_kw)
+                display = model_metric_label(model_name, model_kw, task=task)
                 print(
                     f"[progress] fold={fold + 1} | {selector!r} | k={k} | model={display!r}",
                     flush=True,

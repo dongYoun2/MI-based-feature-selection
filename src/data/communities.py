@@ -7,12 +7,16 @@ Three-stage pipeline:
        split target ``ViolentCrimesPerPop`` into ``y``; keep all remaining
        columns on ``X`` (including non-predictive fields removed in stage 2).
     2. ``clean_communities`` -> ``(X_df, y)``
-       Drop non-predictive location / fold columns; drop features with missing
-       fraction above ``drop_high_missing``. Median imputation is deferred
-       until after train/test splits (:mod:`src.data.imputation`).
+       Generic, dataset-level cleaning that is *not* model-specific: drop
+       non-predictive location / fold columns, keep numerics, drop columns
+       whose missing fraction exceeds ``drop_high_missing`` (median imputation
+       is deferred until after splits; see :mod:`src.data.imputation`).
+       Output is still a human-readable DataFrame with original column names.
     3. ``preprocess_communities(X_train, X_test)`` -> ``(X_train_df, X_test_df)``
        ``StandardScaler`` fit on train only (applied after imputation in
-       :func:`src.data.load_dataset`).
+       :func:`src.data.load_dataset`). Communities features are pre-normalised
+       by UCI to 0-1, so no log/box-cox or one-hot steps are needed -- every
+       column is continuous and on the same nominal scale.
 
 ``load_communities`` runs stages 1+2 and returns a clean ``(DataFrame, Series)``.
 """
@@ -22,6 +26,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
@@ -69,16 +74,20 @@ def clean_communities(
     y: pd.Series,
     drop_high_missing: float = 0.3,
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """Stage 2 -- drop non-predictive columns and high-missingness columns."""
-    X = X.drop(columns=_COMMUNITIES_NON_PREDICTIVE, errors="ignore")
+    """Stage 2 -- drop non-predictive cols, keep numerics, drop cols with
+    > ``drop_high_missing`` missing fraction.
 
-    tmp = X.copy()
-    tmp[_COMMUNITIES_TARGET] = y
-    missing_frac = tmp.isna().mean()
-    tmp = tmp.loc[:, missing_frac <= drop_high_missing]
-    y_out = tmp[_COMMUNITIES_TARGET]
-    X_out = tmp.drop(columns=[_COMMUNITIES_TARGET])
-    return X_out.reset_index(drop=True), y_out.reset_index(drop=True)
+    Median imputation is applied after train/val or train/test splits (see
+    :func:`src.data.median_impute_train`) to avoid leakage. The target has
+    no missing values in the source data, so it is passed through unchanged.
+    """
+    X = X.drop(columns=_COMMUNITIES_NON_PREDICTIVE, errors="ignore")
+    X = X.select_dtypes(include=[np.number])
+
+    missing_frac = X.isna().mean()
+    X = X.loc[:, missing_frac <= drop_high_missing]
+
+    return X.reset_index(drop=True), y.reset_index(drop=True)
 
 
 # --- Stage 3: model-level feature preprocessing ---------------------------
