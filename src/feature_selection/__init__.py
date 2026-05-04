@@ -1,4 +1,4 @@
-from .mi import cmim, cmim_skfeature, jmi, mrmr, mrmr_heuristic, pid_selection
+from .mi import cmim, cmim_skfeature, jmi, jmi_skfeature, mrmr, mrmr_heuristic, pid_selection
 from .baselines import (
     correlation_filter,
     mi_filter,
@@ -19,4 +19,5 @@ __all__ = [
     "rfe_selection",
     "shap_selection",
     "cmim_skfeature",
+    "jmi_skfeature",
 ]

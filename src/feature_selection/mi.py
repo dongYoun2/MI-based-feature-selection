@@ -11,10 +11,13 @@ matches calling the same function with ``k`` directly.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
 from skfeature.function.information_theoretical_based.CMIM import cmim as _cmim_skf_impl
+from skfeature.function.information_theoretical_based.JMI import jmi as _jmi_skf_impl
 
 
 def _feature_mi(X: np.ndarray, y: np.ndarray, task: str, random_state: int) -> np.ndarray:
@@ -221,18 +224,16 @@ def cmim(
     return selected
 
 
-def cmim_skfeature(
+def _skfeature_selection_indices(
     X: np.ndarray,
     y: np.ndarray,
     k: int,
-    task: str = "classification",
+    task: str,
     *,
-    n_bins: int = 10,
-    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+    n_bins: int,
+    skf_select: Callable[..., tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> list[int]:
-    """
-    Run CMIM feature selection from scikit-feature on discretized data.
-    """
+    """Validate inputs, discretize like :func:`cmim`, run a skfeature selector, return feature indices."""
     X = np.asarray(X)
     y = np.asarray(y).reshape(-1)
 
@@ -242,14 +243,43 @@ def cmim_skfeature(
         raise ValueError("y length must match number of rows in X")
 
     n_features = X.shape[1]
-    k = min(int(k), n_features)
-    if k <= 0:
+    k_eff = min(int(k), n_features)
+    if k_eff <= 0:
         return []
 
     X_disc, y_disc = _prepare_discrete(X, y, task, n_bins=n_bins)
-
-    F, _, _ = _cmim_skf_impl(X_disc, y_disc, n_selected_features=k)
+    F, _, _ = skf_select(X_disc, y_disc, n_selected_features=k_eff)
     return [int(i) for i in np.asarray(F).reshape(-1)]
+
+
+def cmim_skfeature(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+) -> list[int]:
+    """Run CMIM feature selection from scikit-feature on discretized data."""
+    return _skfeature_selection_indices(
+        X, y, k, task, n_bins=n_bins, skf_select=_cmim_skf_impl
+    )
+
+
+def jmi_skfeature(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+) -> list[int]:
+    """Run JMI from scikit-feature (``JMI.jmi`` → ``LCSI.lcsi(..., function_name='JMI')``) on discretized data."""
+    return _skfeature_selection_indices(
+        X, y, k, task, n_bins=n_bins, skf_select=_jmi_skf_impl
+    )
 
 
 def jmi(
@@ -326,7 +356,16 @@ if __name__ == "__main__":
             a = cmim(X, y, k, task=task, n_bins=10)
             b = cmim_skfeature(X, y, k, task=task, n_bins=10)
             if a != b:
-                print(f"{task} k={k}: {a!r} vs {b!r}")
+                print(f"CMIM {task} k={k}: {a!r} vs {b!r}")
                 break
         else:
-            print(f"{task}: match k=1..{X.shape[1]}")
+            print(f"CMIM {task}: match k=1..{X.shape[1]}")
+
+        for k in range(1, X.shape[1] + 1):
+            a = jmi(X, y, k, task=task, n_bins=10)
+            b = jmi_skfeature(X, y, k, task=task, n_bins=10)
+            if a != b:
+                print(f"JMI {task} k={k}: {a!r} vs {b!r}")
+                break
+        else:
+            print(f"JMI {task}: match k=1..{X.shape[1]}")
