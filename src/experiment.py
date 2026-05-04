@@ -13,7 +13,7 @@ This is correctness-preserving for all selectors here:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -33,33 +33,7 @@ from .feature_selection import (
     rfe_selection,
     shap_selection,
 )
-from .models import ModelName, build_model
-
-
-def expand_models_with_svm(
-    models: list[str],
-    svm_pairs: list[tuple[float, float | str]] | None,
-) -> list[tuple[str, dict[str, float | str]]]:
-    """One entry per (model, optional svm overrides). ``svm_pairs`` replaces a
-    single ``svm`` with one row per ``(C, gamma)`` when non-empty.
-    """
-    out: list[tuple[str, dict[str, float | str]]] = []
-    for m in models:
-        if m == "svm":
-            if svm_pairs:
-                for c, g in svm_pairs:
-                    out.append((m, {"svm_C": c, "svm_gamma": g}))
-            else:
-                out.append((m, {}))
-        else:
-            out.append((m, {}))
-    return out
-
-
-def model_display_name(model_name: str, svm_kw: dict[str, Any]) -> str:
-    if model_name == "svm" and svm_kw:
-        return f"svm(C={svm_kw['svm_C']},gamma={svm_kw['svm_gamma']})"
-    return model_name
+from .models import build_model, model_metric_label
 
 SelectorFn = Callable[..., list[int]]
 
@@ -133,8 +107,8 @@ def _eval_one_fold(
             selected = full_selected[:k]
             X_train_sel = X_train[:, selected]
             X_val_sel = X_val[:, selected]
-            for model_name, svm_kw in model_specs:
-                display = model_display_name(model_name, svm_kw)
+            for model_name, model_kw in model_specs:
+                display = model_metric_label(model_name, model_kw)
                 print(
                     f"[progress] fold={fold + 1} | {selector!r} | k={k} | model={display!r}",
                     flush=True,
@@ -143,8 +117,7 @@ def _eval_one_fold(
                     model_name,  # type: ignore[arg-type]
                     task=task,
                     random_state=random_state,
-                    svm_C=svm_kw.get("svm_C"),
-                    svm_gamma=svm_kw.get("svm_gamma"),
+                    overrides=model_kw,
                 )
                 model.fit(X_train_sel, y_train)
                 result = evaluate_model(model, X_val_sel, y_val, task)
@@ -174,20 +147,23 @@ def _aggregate_cv_folds(fold_df: pd.DataFrame) -> pd.DataFrame:
 def run_experiment(
     dataset: DatasetName,
     selectors: Iterable[str],
-    models: Iterable[ModelName],
+    model_specs: list[tuple[str, dict[str, float | str]]],
     ks: list[int],
     out_dir: Path | None = None,
     *,
     cv_folds: int = 0,
     random_state: int = 0,
     loader_kwargs: dict | None = None,
-    svm_pairs: list[tuple[float, float | str]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run the (selector, k, model) grid on a single dataset.
 
     Uses K-fold CV when ``cv_folds > 1``, otherwise a single train/test split
     (treated as ``fold=0``). In both modes, per-fold preprocessing (median
     imputation + dataset stage-3) is fit on the training part only.
+
+    ``model_specs`` is an ordered list of ``(model_name, build_kw)`` rows; the
+    same logical model may appear multiple times (e.g. an SVM grid). ``build_kw``
+    is passed to :func:`src.models.build_model` as ``overrides`` (only ``svm`` uses keys today).
 
     ``ks`` is expected to be a non-empty, sorted, deduplicated list of
     positive integers (callers should normalize at the input boundary).
@@ -207,8 +183,7 @@ def run_experiment(
     is_cv = cv_folds > 1
     records: list[dict] = []
     selectors_list = list(selectors)
-    models_list = list(models)
-    model_specs = expand_models_with_svm(models_list, svm_pairs)
+    logical_models = list(dict.fromkeys(n for n, _ in model_specs))
 
     if is_cv:
         X_df, y_arr, task = prepare_xy(dataset, **loader_kwargs)
@@ -221,11 +196,11 @@ def run_experiment(
         )
         print(
             f"[progress] selectors({len(selectors_list)})={selectors_list} "
-            f"models({len(models_list)})={models_list}",
+            f"models({len(logical_models)})={logical_models}",
             flush=True,
         )
-        if svm_pairs:
-            print(f"[progress] svm expanded to {len(model_specs)} model rows: {model_specs}", flush=True)
+        if len(model_specs) > len(logical_models):
+            print(f"[progress] {len(model_specs)} model train configs (expanded grid)", flush=True)
 
         splitter_cls = StratifiedKFold if task == "classification" else KFold
         splitter = splitter_cls(n_splits=cv_folds, shuffle=True, random_state=random_state)
@@ -255,11 +230,11 @@ def run_experiment(
         )
         print(
             f"[progress] selectors({len(selectors_list)})={selectors_list} "
-            f"models({len(models_list)})={models_list}",
+            f"models({len(logical_models)})={logical_models}",
             flush=True,
         )
-        if svm_pairs:
-            print(f"[progress] svm expanded to {len(model_specs)} model rows: {model_specs}", flush=True)
+        if len(model_specs) > len(logical_models):
+            print(f"[progress] {len(model_specs)} model train configs (expanded grid)", flush=True)
         print(
             f"[progress] --- train={len(ds.y_train)} test={len(ds.y_test)} ---",
             flush=True,
