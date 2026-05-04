@@ -179,7 +179,7 @@ def run_experiment(
 
     Returns ``(per_fold_df, summary_df)``.
     """
-    loader_kwargs = loader_kwargs or {}
+    loader_kwargs = {"random_state": random_state, **(loader_kwargs or {})}
     is_cv = cv_folds > 1
     records: list[dict] = []
     selectors_list = list(selectors)
@@ -221,7 +221,7 @@ def run_experiment(
                 fold=fold_idx, feature_names=feature_names,
             ))
     else:
-        ds = load_dataset(dataset, random_state=random_state, **loader_kwargs)
+        ds = load_dataset(dataset, **loader_kwargs)
         _validate_ks(ks, ds.X_train.shape[1], dataset)
         print(
             f"[progress] dataset={dataset!r} task={ds.task!r} "

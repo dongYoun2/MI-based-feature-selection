@@ -22,6 +22,8 @@ applies inside each CV fold via :func:`arrays_for_fold`.
 
 from __future__ import annotations
 
+import inspect
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -29,6 +31,9 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 from .base import DATA_DIR, RAW_DIR, Dataset, DatasetName, Task
+
+PREPROCESSED_DIR = DATA_DIR / "processed"
+_PREPROCESSED_TARGET_COL = "target"
 from .imputation import median_impute_train
 from .communities import (
     clean_communities,
@@ -46,6 +51,7 @@ from .nhanes import clean_nhanes, load_nhanes, load_nhanes_raw, preprocess_nhane
 
 __all__ = [
     "DATA_DIR",
+    "PREPROCESSED_DIR",
     "RAW_DIR",
     "Dataset",
     "DatasetName",
@@ -60,6 +66,8 @@ __all__ = [
     "load_lending_club_raw",
     "load_nhanes",
     "load_nhanes_raw",
+    "load_preprocessed",
+    "make_preprocessed",
     "median_impute_train",
     "prepare_xy",
     "preprocess_communities",
@@ -89,12 +97,59 @@ _PREPROCESSORS: dict[str, Callable[[pd.DataFrame, pd.DataFrame], tuple[pd.DataFr
 }
 
 
+def _call_loader(name: DatasetName, **loader_kwargs):
+    """Invoke ``_LOADERS[name]`` after dropping kwargs it doesn't accept.
+
+    Lets the experiment driver blindly forward ``random_state`` (and
+    similar) without breaking loaders whose signatures don't take it.
+    """
+    loader = _LOADERS[name]
+    accepted = inspect.signature(loader).parameters
+    return loader(**{k: v for k, v in loader_kwargs.items() if k in accepted})
+
+
+def _preprocessed_path(name: DatasetName) -> Path:
+    return PREPROCESSED_DIR / name / f"{name}.csv"
+
+
+def load_preprocessed(name: DatasetName) -> tuple[pd.DataFrame, pd.Series] | None:
+    """Return cached stages-1+2 ``(X, y)`` if the CSV exists, else ``None``."""
+    path = _preprocessed_path(name)
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    y = df[_PREPROCESSED_TARGET_COL]
+    X = df.drop(columns=[_PREPROCESSED_TARGET_COL])
+    return X, y
+
+
+def make_preprocessed(name: DatasetName, **loader_kwargs) -> Path:
+    """Run stages 1+2 and write ``data/processed/<name>/<name>.csv``."""
+    X, y = _call_loader(name, **loader_kwargs)
+    out_path = _preprocessed_path(name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df = X.copy()
+    df[_PREPROCESSED_TARGET_COL] = y.values
+    df.to_csv(out_path, index=False)
+    return out_path
+
+
 def prepare_xy(name: DatasetName, **loader_kwargs) -> tuple[pd.DataFrame, np.ndarray, Task]:
-    """Load cleaned features and labels before train/test split or CV."""
+    """Load cleaned features and labels before train/test split or CV.
+
+    If a preprocessed cache CSV exists at
+    ``data/processed/<name>/<name>.csv``, it is read directly and
+    ``loader_kwargs`` are ignored. Build the cache via :func:`make_preprocessed`
+    or the top-level ``preprocess.py`` script.
+    """
     if name not in _LOADERS:
         raise ValueError(f"Unknown dataset: {name}. Choose from {list(_LOADERS)}.")
     task = _TASKS[name]
-    X_df, y = _LOADERS[name](**loader_kwargs)
+    cached = load_preprocessed(name)
+    if cached is not None:
+        X_df, y = cached
+    else:
+        X_df, y = _call_loader(name, **loader_kwargs)
     X_df = X_df.loc[:, X_df.std(numeric_only=True) > 0]
     y_arr = y.to_numpy(dtype=int if task == "classification" else float)
     return X_df, y_arr, task
@@ -136,6 +191,7 @@ def load_dataset(
 
     Scaling is the responsibility of each dataset's stage-3 preprocessor.
     """
+    loader_kwargs = {"random_state": random_state, **loader_kwargs}
     X_df, y_arr, task = prepare_xy(name, **loader_kwargs)
 
     X_train_df, X_test_df, y_train, y_test = train_test_split(

@@ -58,7 +58,7 @@ shown under "Expected layout".
 - **Download link:** https://www.kaggle.com/datasets/wordsforthewise/lending-club (accepted loans, 2007-2018Q4).
 - **Files to keep:** `accepted_2007_to_2018Q4.csv`
 - **Target directory:** `data/raw/lending_club/`
-- **Notes:** target is `loan_status`, reduced to `Charged Off`/`Default` (1) vs. `Fully Paid` (0); ~2.2M rows, the loader samples 100k by default.
+- **Notes:** target is `loan_status`, reduced to `Charged Off`/`Default` (1) vs. `Fully Paid` (0); ~2.2M rows. The loader randomly samples `nrows` (default 5k) across the full 2007-2018 window — seeded by `random_state` — since the CSV is sorted by `issue_d` and head-N would only see 2015 issues.
 
 ### NHANES 2013-2014
 
@@ -79,3 +79,18 @@ Each run writes to `results/<YYYY-MM-DD_HH-MM-SS>/`:
 - `metrics_<dataset>.csv` — aggregated summary (mean/std of eval metrics across folds).
 - `metrics_<dataset>_per_fold.csv` — one row per (fold, selector, k, model), including the list of selected feature names.
 - `<dataset>.png` — metric vs. k plots (mean ± std).
+
+## Preprocessed cache (optional, speeds up repeated runs)
+
+Stages 1+2 (raw load + dataset-level cleaning) can be cached to a CSV so
+that subsequent experiments skip the expensive read/sample step. Stage 3
+(scaling, one-hot, log1p) still runs **per CV fold** to avoid leakage.
+
+```bash
+python preprocess.py --dataset lending_club --nrows 5000 --random-state 0
+```
+
+This writes `data/processed/lending_club/lending_club.csv`. Any subsequent
+`python main.py --dataset lending_club ...` automatically detects and loads
+the cache (ignoring `--random-state` for the *sample*; CV folds still
+respect it). To force a fresh load, delete the cache file.
