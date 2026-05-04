@@ -20,12 +20,13 @@ def add_experiment_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--selectors",
         nargs="+",
-        default=["mrmr", "mrmr_heuristic", "mi", "correlation", "l1", "rfe", "shap"],
+        default=["correlation", "l1", "rfe", "shap", "mi", "mrmr_heuristic", "pid", "cmim", "jmi"],
+   
     )
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["logreg", "random_forest", "gradient_boosting", "svm"],
+        default=["logreg", "gradient_boosting", "svm"],
     )
     parser.add_argument("--ks", nargs="+", type=int, default=[5, 10, 20, 40])
     parser.add_argument(
