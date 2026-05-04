@@ -56,7 +56,7 @@ def plot_metrics(df: pd.DataFrame, dataset: str, out_path: Path | None = None) -
                             y - std,
                             y + std,
                             color=color,
-                            alpha=0.15,
+                            alpha=0.1,
                             linewidth=0,
                         )
                     ax.plot(kvals, y, marker="o", color=color, label=selector)
@@ -77,11 +77,20 @@ def plot_metrics(df: pd.DataFrame, dataset: str, out_path: Path | None = None) -
             if r == len(metrics) - 1:
                 ax.set_xlabel("k")
             ax.grid(True, alpha=0.3)
-    axes[0, -1].legend(loc="best", fontsize="small")
+
     fig.suptitle(dataset)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0.0, 0.0, 0.80, 0.96))
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="center left",
+        bbox_to_anchor=(0.82, 0.5),
+        fontsize="small",
+        frameon=True,
+        borderaxespad=0,
+    )
 
     if out_path is not None:
-        fig.savefig(out_path, dpi=150)
-
-    # plt.close(fig)
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")

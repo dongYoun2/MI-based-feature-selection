@@ -9,9 +9,9 @@ Each dataset lives in its own module under :mod:`src.data` and exposes the
 same three-stage API: ``load_<name>_raw`` (stage 1), ``clean_<name>``
 (stage 2), ``preprocess_<name>`` (stage 3), plus a ``load_<name>``
 convenience wrapper that runs stages 1+2 and returns a clean
-``(DataFrame, Series)`` pair. Only NHANES has the staged functions
-implemented today; the corresponding stubs for communities and lending_club
-raise ``NotImplementedError`` and will be filled in later.
+``(DataFrame, Series)`` pair. NHANES and Communities expose full staged
+APIs; Lending Club still uses a single combined loader for stages 1+2 with
+stub raw/clean entrypoints.
 
 ``load_dataset`` is the cross-dataset entrypoint: it runs stages 1+2,
 performs the train/test split, median-imputes using the training fold only

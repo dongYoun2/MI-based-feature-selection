@@ -24,6 +24,7 @@ from .evaluate import evaluate_model
 from .feature_selection import (
     cmim,
     correlation_filter,
+    jmi,
     l1_selection,
     mi_filter,
     mrmr,
@@ -32,7 +33,7 @@ from .feature_selection import (
     rfe_selection,
     shap_selection,
 )
-from .models import ModelName, build_model
+from .models import build_model, model_metric_label
 
 SelectorFn = Callable[..., list[int]]
 
@@ -45,6 +46,7 @@ SELECTORS: dict[str, SelectorFn] = {
     "rfe": rfe_selection,
     "shap": shap_selection,
     "cmim": cmim,
+    "jmi": jmi,
     "pid": pid_selection,
 }
 
@@ -70,7 +72,7 @@ def _eval_one_fold(
     y_val: np.ndarray,
     task: Task,
     selectors: Iterable[str],
-    models: Iterable[ModelName],
+    model_specs: list[tuple[str, dict[str, float | str]]],
     ks: list[int],
     random_state: int,
     *,
@@ -89,21 +91,40 @@ def _eval_one_fold(
 
     records: list[dict] = []
     for selector in selectors:
+        print(
+            f"[progress] fold={fold + 1} | selector={selector!r} | "
+            f"feature selection (k_max={k_max})...",
+            flush=True,
+        )
         full_selected = list(SELECTORS[selector](
             X_train, y_train, k=k_max, task=task, random_state=random_state,
         ))
+        print(
+            f"[progress] fold={fold + 1} | selector={selector!r} | selection done → train models",
+            flush=True,
+        )
         for k in ks:
             selected = full_selected[:k]
             X_train_sel = X_train[:, selected]
             X_val_sel = X_val[:, selected]
-            for model_name in models:
-                model = build_model(model_name, task=task, random_state=random_state)
+            for model_name, model_kw in model_specs:
+                display = model_metric_label(model_name, model_kw, task=task)
+                print(
+                    f"[progress] fold={fold + 1} | {selector!r} | k={k} | model={display!r}",
+                    flush=True,
+                )
+                model = build_model(
+                    model_name,  # type: ignore[arg-type]
+                    task=task,
+                    random_state=random_state,
+                    overrides=model_kw,
+                )
                 model.fit(X_train_sel, y_train)
                 result = evaluate_model(model, X_val_sel, y_val, task)
                 records.append({
                     "fold": fold,
                     "selector": selector,
-                    "model": model_name,
+                    "model": display,
                     "k": k,
                     "selected_features": [feature_names[i] for i in selected],
                     **result,
@@ -126,7 +147,7 @@ def _aggregate_cv_folds(fold_df: pd.DataFrame) -> pd.DataFrame:
 def run_experiment(
     dataset: DatasetName,
     selectors: Iterable[str],
-    models: Iterable[ModelName],
+    model_specs: list[tuple[str, dict[str, float | str]]],
     ks: list[int],
     out_dir: Path | None = None,
     *,
@@ -139,6 +160,10 @@ def run_experiment(
     Uses K-fold CV when ``cv_folds > 1``, otherwise a single train/test split
     (treated as ``fold=0``). In both modes, per-fold preprocessing (median
     imputation + dataset stage-3) is fit on the training part only.
+
+    ``model_specs`` is an ordered list of ``(model_name, build_kw)`` rows; the
+    same logical model may appear multiple times (e.g. an SVM grid). ``build_kw``
+    is passed to :func:`src.models.build_model` as ``overrides`` (only ``svm`` uses keys today).
 
     ``ks`` is expected to be a non-empty, sorted, deduplicated list of
     positive integers (callers should normalize at the input boundary).
@@ -157,30 +182,66 @@ def run_experiment(
     loader_kwargs = loader_kwargs or {}
     is_cv = cv_folds > 1
     records: list[dict] = []
+    selectors_list = list(selectors)
+    logical_models = list(dict.fromkeys(n for n, _ in model_specs))
 
     if is_cv:
         X_df, y_arr, task = prepare_xy(dataset, **loader_kwargs)
         _validate_ks(ks, X_df.shape[1], dataset)
+
+        print(
+            f"[progress] dataset={dataset!r} task={task!r} n_features={X_df.shape[1]} "
+            f"cv_folds={cv_folds} ks={ks}",
+            flush=True,
+        )
+        print(
+            f"[progress] selectors({len(selectors_list)})={selectors_list} "
+            f"models({len(logical_models)})={logical_models}",
+            flush=True,
+        )
+        if len(model_specs) > len(logical_models):
+            print(f"[progress] {len(model_specs)} model train configs (expanded grid)", flush=True)
 
         splitter_cls = StratifiedKFold if task == "classification" else KFold
         splitter = splitter_cls(n_splits=cv_folds, shuffle=True, random_state=random_state)
         split_y = y_arr if task == "classification" else None
 
         for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X_df, split_y)):
+            print(
+                f"[progress] --- CV fold {fold_idx + 1}/{cv_folds} "
+                f"(train={len(train_idx)} val={len(val_idx)}) ---",
+                flush=True,
+            )
             X_train, X_val, y_train, y_val, feature_names, fold_task = arrays_for_fold(
                 dataset, X_df, y_arr, train_idx, val_idx
             )
             records.extend(_eval_one_fold(
                 X_train, X_val, y_train, y_val, fold_task,
-                selectors, models, ks, random_state,
+                selectors_list, model_specs, ks, random_state,
                 fold=fold_idx, feature_names=feature_names,
             ))
     else:
         ds = load_dataset(dataset, random_state=random_state, **loader_kwargs)
         _validate_ks(ks, ds.X_train.shape[1], dataset)
+        print(
+            f"[progress] dataset={dataset!r} task={ds.task!r} "
+            f"n_features={ds.X_train.shape[1]} single split (no CV) ks={ks}",
+            flush=True,
+        )
+        print(
+            f"[progress] selectors({len(selectors_list)})={selectors_list} "
+            f"models({len(logical_models)})={logical_models}",
+            flush=True,
+        )
+        if len(model_specs) > len(logical_models):
+            print(f"[progress] {len(model_specs)} model train configs (expanded grid)", flush=True)
+        print(
+            f"[progress] --- train={len(ds.y_train)} test={len(ds.y_test)} ---",
+            flush=True,
+        )
         records.extend(_eval_one_fold(
             ds.X_train, ds.X_test, ds.y_train, ds.y_test, ds.task,
-            selectors, models, ks, random_state,
+            selectors_list, model_specs, ks, random_state,
             fold=0, feature_names=ds.feature_names,
         ))
 

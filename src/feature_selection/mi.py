@@ -2,6 +2,7 @@
 
 - Implements mRMR (Peng et al., 2005)
 - Implements CMIM (Fleuret, 2004)
+- Implements JMI / LCSI JMI (Brown et al., 2012; discrete, as in scikit-feature)
 - Implements a PID-motivated CMI selector (Wollstadt et al., 2023 framing; joint conditioning, not PID atoms)
 
 Greedy order is fixed for a given data split, so ``k = k_max`` then ``[:k]``
@@ -10,10 +11,13 @@ matches calling the same function with ``k`` directly.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
 from skfeature.function.information_theoretical_based.CMIM import cmim as _cmim_skf_impl
+from skfeature.function.information_theoretical_based.JMI import jmi as _jmi_skf_impl
 
 
 def _feature_mi(X: np.ndarray, y: np.ndarray, task: str, random_state: int) -> np.ndarray:
@@ -220,18 +224,16 @@ def cmim(
     return selected
 
 
-def cmim_skfeature(
+def _skfeature_selection_indices(
     X: np.ndarray,
     y: np.ndarray,
     k: int,
-    task: str = "classification",
+    task: str,
     *,
-    n_bins: int = 10,
-    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+    n_bins: int,
+    skf_select: Callable[..., tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> list[int]:
-    """
-    Run CMIM feature selection from scikit-feature on discretized data.
-    """
+    """Validate inputs, discretize like :func:`cmim`, run a skfeature selector, return feature indices."""
     X = np.asarray(X)
     y = np.asarray(y).reshape(-1)
 
@@ -241,14 +243,104 @@ def cmim_skfeature(
         raise ValueError("y length must match number of rows in X")
 
     n_features = X.shape[1]
-    k = min(int(k), n_features)
+    k_eff = min(int(k), n_features)
+    if k_eff <= 0:
+        return []
+
+    X_disc, y_disc = _prepare_discrete(X, y, task, n_bins=n_bins)
+    F, _, _ = skf_select(X_disc, y_disc, n_selected_features=k_eff)
+    return [int(i) for i in np.asarray(F).reshape(-1)]
+
+
+def cmim_skfeature(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+) -> list[int]:
+    """Run CMIM feature selection from scikit-feature on discretized data."""
+    return _skfeature_selection_indices(
+        X, y, k, task, n_bins=n_bins, skf_select=_cmim_skf_impl
+    )
+
+
+def jmi_skfeature(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for API uniformity; selection is deterministic
+) -> list[int]:
+    """Run JMI from scikit-feature (``JMI.jmi`` → ``LCSI.lcsi(..., function_name='JMI')``) on discretized data."""
+    return _skfeature_selection_indices(
+        X, y, k, task, n_bins=n_bins, skf_select=_jmi_skf_impl
+    )
+
+
+def jmi(
+    X: np.ndarray,
+    y: np.ndarray,
+    k: int,
+    task: str = "classification",
+    *,
+    n_bins: int = 10,
+    random_state: int = 0,  # noqa: ARG001 -- accepted for interface uniformity; method is deterministic
+) -> list[int]:
+    """Joint Mutual Information (JMI) greedy selection from the LCSI family.
+
+    Matches scikit-feature ``LCSI.lcsi(..., function_name='JMI')`` on discrete
+    data (Brown et al., JMLR 2012): first feature is ``argmax_j I(X_j; y)``;
+    each later step uses
+    ``I(X_j;y) - (1/|S|) sum_{s in S} I(X_j;X_s) + (1/|S|) sum_{s in S} I(X_j;X_s|y)``
+    with ``S`` the set of indices already chosen.  Incremental updates use only
+    the most recently selected column, as in the reference implementation.
+
+    ``X`` and ``y`` are discretized like :func:`cmim` / :func:`pid_selection`.
+    """
+    n_features = X.shape[1]
+    k = min(k, n_features)
     if k <= 0:
         return []
 
     X_disc, y_disc = _prepare_discrete(X, y, task, n_bins=n_bins)
+    t1 = _marginal_mi_per_feature(X_disc, y_disc)
+    t2 = np.zeros(n_features)
+    t3 = np.zeros(n_features)
 
-    F, _, _ = _cmim_skf_impl(X_disc, y_disc, n_selected_features=k)
-    return [int(i) for i in np.asarray(F).reshape(-1)]
+    first = int(np.argmax(t1))
+    selected: list[int] = [first]
+    if len(selected) >= k:
+        return selected
+
+    f_select = X_disc[:, first]
+
+    while len(selected) < k:
+        n_s = len(selected)
+        beta = 1.0 / n_s
+        gamma = 1.0 / n_s
+        best_score = -np.inf
+        best_idx = -1
+        for i in range(n_features):
+            if i in selected:
+                continue
+            fi = X_disc[:, i]
+            t2[i] += _mi_discrete(f_select, fi)
+            t3[i] += _cmi_discrete(f_select, fi, y_disc)
+            score = t1[i] - beta * t2[i] + gamma * t3[i]
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        if best_idx < 0:
+            break
+        selected.append(best_idx)
+        f_select = X_disc[:, best_idx]
+
+    return selected
 
 
 if __name__ == "__main__":
@@ -264,7 +356,16 @@ if __name__ == "__main__":
             a = cmim(X, y, k, task=task, n_bins=10)
             b = cmim_skfeature(X, y, k, task=task, n_bins=10)
             if a != b:
-                print(f"{task} k={k}: {a!r} vs {b!r}")
+                print(f"CMIM {task} k={k}: {a!r} vs {b!r}")
                 break
         else:
-            print(f"{task}: match k=1..{X.shape[1]}")
+            print(f"CMIM {task}: match k=1..{X.shape[1]}")
+
+        for k in range(1, X.shape[1] + 1):
+            a = jmi(X, y, k, task=task, n_bins=10)
+            b = jmi_skfeature(X, y, k, task=task, n_bins=10)
+            if a != b:
+                print(f"JMI {task} k={k}: {a!r} vs {b!r}")
+                break
+        else:
+            print(f"JMI {task}: match k=1..{X.shape[1]}")
