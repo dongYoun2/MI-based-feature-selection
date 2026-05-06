@@ -7,7 +7,7 @@ import sys
 
 from src.cli import add_experiment_args, normalize_experiment_args
 from src.experiment import run_experiment
-from src.plotting import plot_metrics
+from src.analysis.plotting import plot_metrics
 from src.svm_grid import expand_models_with_svm, resolve_svm_pairs_from_cli
 
 
@@ -71,7 +71,7 @@ def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     print(summary_df)
-    plot_metrics(summary_df, dataset=args.dataset, out_path=args.out_dir / f"{args.dataset}.png")
+    plot_metrics(summary_df, dataset=args.dataset, save_path=args.out_dir / f"{args.dataset}.png")
 
 
 if __name__ == "__main__":
