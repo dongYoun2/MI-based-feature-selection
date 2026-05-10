@@ -7,18 +7,23 @@ filtering, L1, RFE, SHAP) on tabular benchmarks (Communities & Crime, Lending Cl
 
 ```
 .
-├── data/                   # raw + optional processed CSV cache
+├── data/
+│   ├── raw/                # source datasets, arranged by dataset
+│   └── processed/          # optional preprocessed CSV cache
+├── notebooks/              # exploratory analysis and result inspection
+├── results/                # experiment outputs, plots, and summaries
 ├── src/
-│   ├── data/               # dataset loaders & cleaning
-│   ├── feature_selection/  # mi.py, baselines.py
-│   ├── cli.py
-│   ├── experiment.py       # CV pipeline
-│   ├── models.py
-│   └── evaluate.py
-├── preprocess.py           # writes processed cache used by main
-├── main.py
-├── notebooks/              # includes EDA to draw insights for preprocessing decisions
-├── results/                # saved metrics, plots
+│   ├── analysis/           # plotting, stability, and summary utilities
+│   ├── data/               # dataset loading and preprocessing helpers
+│   ├── feature_selection/  # MI-based selectors and baseline methods
+│   ├── cli.py              # command-line argument parsing
+│   ├── evaluate.py         # evaluation metrics
+│   ├── experiment.py       # cross-validation experiment pipeline
+│   └── models.py           # model definitions and factory helpers
+├── main.py                 # experiment entry point
+├── preprocess.py           # builds processed dataset caches
+├── svm_param_search.py     # SVM hyperparameter search entry point
+├── environment.yaml
 ├── requirements.txt
 ```
 

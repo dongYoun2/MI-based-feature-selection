@@ -15,6 +15,8 @@ from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 
+from src.models import ModelName
+
 ALL_METRICS: list[str] = ["auc", "avg_precision", "rmse", "r2"]
 
 # Stable colors across all figures: index i → f"C{i % 10}"
@@ -182,6 +184,8 @@ def plot_metrics(
     dataset: str,
     save_path: Path | None = None,
     selector_labels: dict[str, str] | None = None,
+    models: Sequence[ModelName] | None = None,
+    metrics: Sequence[str] | None = None,
 ) -> Figure | None:
     """Save a single ``<dataset>.png`` figure to ``save_path``.
 
@@ -190,15 +194,17 @@ def plot_metrics(
     label used in the figure title. ``selector_labels`` optionally maps
     canonical selector names to display labels without changing selector colors.
     """
-    metrics = [
-        m
-        for m in ALL_METRICS
-        if m in df.columns or f"{m}_mean" in df.columns
-    ]
     if not metrics:
-        return None
+        metrics = [
+            m
+            for m in ALL_METRICS
+            if m in df.columns or f"{m}_mean" in df.columns
+        ]
+        assert metrics
 
-    models = sorted(df["model"].unique())
+    if not models:
+        models = sorted(df["model"].unique())
+
     selectors = sorted(df["selector"].unique())
     palette = _stable_selector_palette(selectors)
 
@@ -229,7 +235,7 @@ def plot_metrics(
                 ax.set_xlabel("k")
             ax.grid(True, alpha=0.3)
 
-    fig.suptitle(dataset)
+    # fig.suptitle(dataset)
     fig.tight_layout(rect=(0.0, 0.0, 0.80, 0.96))
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
